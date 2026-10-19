@@ -36,8 +36,22 @@ $0 (your own PC + Cloudflare free plan); the only cost is the domain (~$10-16/yr
 
 ## Prerequisites (on the clinic PC)
 
-- Windows 10/11, Git, **Node 20.11+ LTS** (nvm-windows or nodejs.org installer),
-  MySQL 8 running with the existing `iave_clinic` database.
+Run **`check-prereqs.bat`** (as Administrator) to see what is missing. It needs:
+
+- Windows 10/11.
+- **Git** for Windows (git-scm.com).
+- **Node 20.11+ LTS** (nodejs.org or nvm-windows). Verify with `node -v`.
+- **MySQL 8** running, with an `iave_clinic` database. `setup-server.bat` can
+  create the schema, but MySQL itself must be installed and running first.
+  - Install with the **MySQL Installer for Windows**
+    (https://dev.mysql.com/downloads/installer/) -> choose *MySQL Server 8.0*.
+    Set a root password and keep the default port `3306`.
+  - Or, with Chocolatey: `choco install mysql` (run the shell as Administrator).
+  - Create the database once (adjust the path to your MySQL version):
+    ```
+    "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p -e "CREATE DATABASE IF NOT EXISTS iave_clinic CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+    ```
+  - Verify the service exists: `sc query MySQL80` (or `MySQL` / `MySQL57`).
 - A Cloudflare account.
 - Internet/outbound access (Cloudflare Tunnel works behind NAT; no router
   changes needed).
@@ -92,10 +106,13 @@ DNS record, so no `config.yml` and no `cloudflared tunnel login` are needed):
 1. Go to **Zero Trust** (one.dash.cloudflare.com) -> **Networks** -> **Tunnels**.
 2. Select the existing tunnel `souvari` (or **Create a tunnel** ->
    **Cloudflared** -> name it `souvari` -> **Create**).
-3. Under **Routes**, add a **Published application**:
-   - Hostname: `souvari-skin-lab.site`
-   - Service URL: `http://localhost:3000`
-   - (Add a second route for `www.souvari-skin-lab.site` if you want www too.)
+3. Under **Routes**, add **two** Published applications, both pointing at the app:
+   - Hostname: `www.souvari-skin-lab.site` -> Service URL `http://localhost:3000`
+   - Hostname: `souvari-skin-lab.site` (the apex) -> Service URL `http://localhost:3000`
+
+   Both are needed. A route creates the DNS record for that exact hostname, so
+   adding only `www` leaves the bare `souvari-skin-lab.site` with no record (it
+   will not resolve). Cloudflare flattens the apex `CNAME` automatically.
 4. If you are creating a new tunnel, copy the **token** shown on the install
    screen, then run **setup-tunnel.bat** (as Administrator) and paste it.
    If the connector is already installed, you can skip this.
@@ -141,7 +158,9 @@ DNS record, so no `config.yml` and no `cloudflared tunnel login` are needed):
 | `souvari-skin-lab.site` hangs or DNS not resolving | Tunnel must show **HEALTHY** in the dashboard and the `cloudflared` service must be **Running** (`sc query cloudflared`); the Published application route must exist. If a Cloudflare **Pages** project still owns the domain, remove it from Pages → Custom domains. |
 | Site shows but API calls fail | `pm2 logs souvari-api`; confirm `server\.env` `FRONTEND_URL`/`BACKEND_URL` = `https://souvari-skin-lab.site`; restart `pm2 restart souvari-api`. |
 | PC rebooted, site down | Server restarts on login (task `SouvariServer`); tunnel is a Windows service. Make sure someone logs into Windows, or use a service account. |
-| Error 1033 / "tunnel not found" | The tunnel has no published route. Add the Published application route (`souvari-skin-lab.site` → `http://localhost:3000`) in the dashboard. |
+| Error 1033 / "tunnel not found" | The tunnel has no published route. Add the Published application route (`souvari-skin-lab.site` and `www.souvari-skin-lab.site` → `http://localhost:3000`) in the dashboard. |
+| Error 502 Bad Gateway | The route and tunnel are fine, but the origin is down: nothing is listening on `http://localhost:3000` on the PC running `cloudflared`. Start the app (`pm2 start ecosystem.config.js` / re-run `setup-server.bat`) and check `pm2 list` shows `souvari-api` online; check the Service URL in the route is exactly `http://localhost:3000`. |
+| `souvari-skin-lab.site` (apex) doesn't resolve, `www` works | Only the `www` route was added. Add a second Published application route for the apex hostname (a route creates its DNS record). |
 | Pages build fails with `tsc: not found` / `vite: not found` | Expected — Pages installs only the repo-root deps. Do not use Pages; use the tunnel. |
 | Rate limiter / logs mention `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` | Rebuild the server so `app.set('trust proxy', 1)` is in `dist` (from this repo), then `pm2 restart souvari-api`. |
 | `prisma migrate deploy` fails (P3009/P3018, error 1050/1091) | Update the repo, re-run `setup-server.bat` (it runs the preflights + retries). Inspect with `npx prisma migrate status`. Usually a snapshot import left duplicate phones or a half-applied migration; the preflights clear both. |

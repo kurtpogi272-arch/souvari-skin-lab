@@ -10,7 +10,7 @@ Estimated cost: **P300–900/month ($5–15)**, Hobby plan, always-on.
 ## 1. Push the code to GitHub
 
 Your repo must be on GitHub (the deploy kit elsewhere in this folder already
-clones it as `https://github.com/Kurt-De-Asis/souvari-skin-lab-cms`).
+clones it as `https://github.com/kurtpogi272-arch/souvari-skin-lab`).
 Make sure `Dockerfile` and `railway.toml` at the repo root are pushed too.
 
 ## 2. Create the Railway project

@@ -22,7 +22,7 @@ if [[ ! -s "$DUMP" ]]; then
   echo "Fetching snapshot from GitHub..."
   (command -v curl >/dev/null || apt-get install -y curl >/dev/null 2>&1 || true)
   curl -fsSL -o "$DUMP" \
-    https://raw.githubusercontent.com/Kurt-De-Asis/souvari-skin-lab-cms/master/deploy/db/souvari-live.sql \
+    https://raw.githubusercontent.com/kurtpogi272-arch/souvari-skin-lab/master/deploy/db/souvari-live.sql \
     || { echo "ERROR: could not fetch snapshot"; exit 1; }
 fi
 echo "Using: $DUMP"
