@@ -89,7 +89,7 @@ export default function Customers() {
       last_name: c.last_name,
       email: c.user?.email || '',
       phone: c.user?.phone || '',
-      gender: c.gender,
+      gender: c.gender || '',
       date_of_birth: c.date_of_birth || '',
       address: c.address || '',
     });
@@ -291,9 +291,11 @@ export default function Customers() {
             <div>
               <label className="label">Gender</label>
               <select className="select-field" {...register('gender')}>
+                <option value="">Not specified</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
                 <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
               </select>
             </div>
           </div>

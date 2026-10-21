@@ -186,6 +186,11 @@ export default function BookingPage({ embedded = false }: { embedded?: boolean }
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(() => restore?.selectedSlot || null);
   const [selectedStaffId, setSelectedStaffId] = useState(0);
+  // Store hours + a day-level "closed" reason from the availability response,
+  // used to explain why a chosen time is unbookable (closed, out of hours)
+  // rather than incorrectly implying the specialist is already booked.
+  const [businessHours, setBusinessHours] = useState<{ start: string; end: string; label: string } | null>(null);
+  const [slotsClosedReason, setSlotsClosedReason] = useState<string | null>(null);
 
   const [customerInfo, setCustomerInfo] = useState({
     notes: restore?.notes || '',
@@ -357,7 +362,12 @@ export default function BookingPage({ embedded = false }: { embedded?: boolean }
           date: selectedDate,
           duration_minutes: totalDur,
         });
-        const raw = data.data?.available_slots || data.data?.slots || data.data || [];
+        const payload = data.data || data;
+        const hours = payload?.business_hours;
+        setBusinessHours(hours && hours.start && hours.end ? hours : null);
+        setSlotsClosedReason(payload?.closed ? (payload?.closed_reason || 'The clinic is closed on this day.') : null);
+
+        const raw = payload?.available_slots || payload?.slots || data.data || [];
         if (Array.isArray(raw)) {
           for (const s of raw) {
             if (!s?.start || !s?.staff_id) continue;
@@ -373,6 +383,7 @@ export default function BookingPage({ embedded = false }: { embedded?: boolean }
         setSlots(allSlots);
       } catch {
         setSlots([]);
+        setSlotsClosedReason(null);
       } finally {
         setLoadingSlots(false);
       }
@@ -682,6 +693,8 @@ export default function BookingPage({ embedded = false }: { embedded?: boolean }
                       setSelectedSlot(null);
                     }}
                     date={selectedDate}
+                    businessHours={businessHours}
+                    closedReason={slotsClosedReason}
                   />
                 )}
               </div>

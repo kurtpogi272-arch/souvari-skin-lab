@@ -23,7 +23,7 @@ export const updateCustomerSchema = z.object({
   phone: z.string().max(20).optional(),
   email: z.string().email().optional(),
   date_of_birth: z.string().optional(),
-  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional(),
+  gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).nullable().or(z.literal('')).optional(),
   address: z.string().optional(),
   city: z.string().max(100).optional(),
   state: z.string().max(100).optional(),
@@ -32,6 +32,13 @@ export const updateCustomerSchema = z.object({
   avatar_url: z.string().max(500).optional(),
 });
 
+/**
+ * Update schema mirrors create, but every field is optional and "no gender"
+ * arrives from the UI as either an empty string (unselected `<select>`) or
+ * null (a customer whose gender was never recorded). Both are normalized to
+ * null by the service, so the enum accepts them here too instead of returning
+ * a bare "Validation failed".
+ */
 export const walkInCustomerSchema = z.object({
   first_name: z.string().min(1, 'First name is required').max(100),
   last_name: z.string().min(1, 'Last name is required').max(100),

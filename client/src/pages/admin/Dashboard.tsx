@@ -138,7 +138,7 @@ export default function Dashboard() {
         analyticsApi.getServices(),
         analyticsApi.getSummary({ start_date: dateFrom, end_date: dateTo }),
         analyticsApi.getSummary({ start_date: prev.from, end_date: prev.to }),
-        appointmentsApi.list({ date: todayStr }),
+        appointmentsApi.list({ date_from: todayStr, date_to: todayStr }),
       ];
       const [dash, rev, prevRev, apt, prevApt, svc, sum, prevSum, todayRes] = await Promise.allSettled(jobs);
 

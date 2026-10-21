@@ -3,6 +3,7 @@ import { getSMSProvider } from './sms.service';
 import logger from '../utils/logger';
 import { NotificationType } from '@prisma/client';
 import { env } from '../config/env';
+import { normalizePhone } from '../utils/identity';
 import {
   APPOINTMENT_BOOKED_MESSAGE,
   APPOINTMENT_CHECKED_IN_MESSAGE,
@@ -43,16 +44,27 @@ class NotificationDispatchService {
 
     // 2. Send SMS if requested and phone is available
     let smsSent = false;
-    if (sendSMS && smsPhone) {
+    if (sendSMS) {
+      const recipient = normalizePhone(smsPhone) ?? null;
+      if (!recipient) {
+        // The request asked for an SMS but the account has no usable number.
+        // Log loudly so a "no cancellation text" report is traceable instead of
+        // looking like a silent success.
+        logger.warn(
+          `[NOTIFICATION] SMS skipped for user ${userId}: no valid phone number on file (raw: ${smsPhone ?? 'none'})`
+        );
+        return { notification, smsSent };
+      }
+
       try {
         const provider = getSMSProvider();
         const smsText = `${SMS_GREETING} ${message}`;
-        const result = await provider.send(smsPhone, smsText);
+        const result = await provider.send(recipient, smsText);
 
         await prisma.sms_logs.create({
           data: {
             user_id: userId,
-            recipient_phone: smsPhone,
+            recipient_phone: recipient,
             message: smsText,
             status: result.success ? 'sent' : 'failed',
             external_id: result.externalId ?? null,
@@ -61,6 +73,11 @@ class NotificationDispatchService {
           },
         });
 
+        if (!result.success) {
+          logger.warn(
+            `[NOTIFICATION] SMS to ${recipient} for user ${userId} failed: ${result.error ?? 'unknown error'}`
+          );
+        }
         smsSent = result.success;
       } catch (err: any) {
         logger.error(`[NOTIFICATION] SMS failed for user ${userId}: ${err.message}`);

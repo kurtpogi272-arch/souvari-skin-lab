@@ -39,6 +39,12 @@ const CUSTOMER_CANCELLABLE_STATUSES = ['pending', 'confirmed'];
 const CUSTOMER_CANCEL_REASON = 'Cancelled by customer';
 
 /**
+ * Statuses that describe what is happening *in the clinic* on the day of the
+ * visit. They cannot be set before the appointment's date arrives.
+ */
+const STATUS_REQUIRES_TODAY = ['checked_in', 'in_progress', 'completed'];
+
+/**
  * Weekday names indexed directly by JS `Date.getDay()` (0 = Sunday), so a date
  * read out of the DB can be resolved with no arithmetic.
  */
@@ -69,7 +75,7 @@ export class AppointmentService {
 
   async list(query: ListAppointmentsQuery): Promise<PaginatedResult<any>> {
     const { page, limit, skip } = getPaginationParams(query);
-    const { customer_id, staff_id, service_id, status, date_from, date_to, sort_by, sort_order } = query;
+    const { customer_id, staff_id, service_id, status, date, date_from, date_to, sort_by, sort_order } = query;
 
     const where: any = { deleted_at: null };
 
@@ -84,11 +90,16 @@ export class AppointmentService {
       where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
     }
 
-    if (date_from || date_to) {
+    // `date` is a convenience alias for a single day; expand it to the same
+    // inclusive range a date_from/date_to pair would produce. Without this a
+    // caller asking for "today" silently received every day's appointments.
+    const rangeFrom = date_from ?? date;
+    const rangeTo = date_to ?? date;
+    if (rangeFrom || rangeTo) {
       where.appointment_date = {};
-      if (date_from) where.appointment_date.gte = new Date(date_from);
-      if (date_to) {
-        const endDate = new Date(date_to);
+      if (rangeFrom) where.appointment_date.gte = new Date(rangeFrom);
+      if (rangeTo) {
+        const endDate = new Date(rangeTo);
         endDate.setHours(23, 59, 59, 999);
         where.appointment_date.lte = endDate;
       }
@@ -347,6 +358,10 @@ export class AppointmentService {
       endTime = `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}`;
     }
 
+    // Store-hours gate: the booking window must fit inside the clinic's public
+    // opening hours, not merely the specialist's shift.
+    await this.assertWithinBusinessHours(data.start_time, endTime);
+
     // Resolve the staff member. Every booking must explicitly select the
     // specialist who will perform the service.
     const staff = await this.resolveStaff(
@@ -422,7 +437,7 @@ export class AppointmentService {
         adminUserIds,
       });
     } catch (err: any) {
-      // Notification failure should not block appointment creation
+      logger.error(`[APPOINTMENT] New-booking notification failed: ${err?.message ?? err}`);
     }
 
     return appointment;
@@ -490,6 +505,10 @@ export class AppointmentService {
     const startTotal = startHours * 60 + startMins;
     const endTotal = startTotal + totalDuration;
     const endTime = `${String(Math.floor(endTotal / 60)).padStart(2, '0')}:${String(endTotal % 60).padStart(2, '0')}`;
+
+    // Store-hours gate: the whole multi-service block must fit inside the
+    // clinic's public opening hours.
+    await this.assertWithinBusinessHours(data.start_time, endTime);
 
     // Resolve the single specialist who handles the whole block
     const staff = await this.resolveStaff(data.staff_id, data.appointment_date, data.start_time, endTime);
@@ -576,7 +595,7 @@ export class AppointmentService {
         adminUserIds,
       });
     } catch (err: any) {
-      // Notification failure should not block appointment creation
+      logger.error(`[APPOINTMENT] Group-booking notification failed: ${err?.message ?? err}`);
     }
 
     const result = appointment;
@@ -609,6 +628,12 @@ export class AppointmentService {
       throw new AppError('Staff member not found', 404);
     }
 
+    // Store-hours and staff-shift checks run *before* the conflict scan so an
+    // out-of-hours request reports the real reason instead of a misleading
+    // "already booked" conflict. Mirrors getAvailability.
+    await this.assertWithinBusinessHours(startTime, endTime);
+    await this.assertStaffWorkable(staffId, appointmentDate, startTime, endTime);
+
     const conflicts = await prisma.appointments.findMany({
       where: {
         staff_id: staff.id,
@@ -622,10 +647,6 @@ export class AppointmentService {
     if (conflicts.length > 0) {
       throw new AppError('Staff member already has an appointment during this time slot', 409);
     }
-
-    // A booking can never be placed with a specialist who is off on that date,
-    // and the window must fit their shift and break — mirrors getAvailability.
-    await this.assertStaffWorkable(staffId, appointmentDate, startTime, endTime);
 
     return staff;
   }
@@ -708,6 +729,22 @@ export class AppointmentService {
     }
 
     const isCustomerSelfService = context?.role === 'customer';
+
+    // Check-in and the steps that follow it only make sense on the day of the
+    // visit. Without this, a booking dated tomorrow could be marked arrived
+    // today. `appointment_date` is a DATE column, so compare like-for-like
+    // against the clinic's local date.
+    if (
+      data.status !== undefined &&
+      data.status !== existing.status &&
+      STATUS_REQUIRES_TODAY.includes(data.status) &&
+      this.dateStringOf(existing.appointment_date) > this.localDateString()
+    ) {
+      throw new AppError(
+        'This appointment is scheduled for a future date and cannot be updated yet.',
+        422
+      );
+    }
 
     // A customer may only cancel their own appointment, and only while it is
     // still cancellable. Enforced here so it cannot be bypassed by calling the
@@ -912,7 +949,7 @@ export class AppointmentService {
             });
           }
         } catch (err: any) {
-          // Notification failure should not block status update
+          logger.error(`[APPOINTMENT] Status-change notification failed for #${id} (${existing.status}->${data.status}): ${err?.message ?? err}`);
         }
       }
 
@@ -925,7 +962,7 @@ export class AppointmentService {
             data.reschedule_reason ?? data.notes ?? null
           );
         } catch (err: any) {
-          // Notification failure should not block the service change
+          logger.error(`[APPOINTMENT] Service-change notification failed for #${id}: ${err?.message ?? err}`);
         }
       }
 
@@ -986,7 +1023,7 @@ export class AppointmentService {
           data.reschedule_reason ?? data.notes ?? null
         );
       } catch (err: any) {
-        // Notification failure should not block the service change
+        logger.error(`[APPOINTMENT] Service-change notification failed: ${err?.message ?? err}`);
       }
     }
 
@@ -1039,7 +1076,7 @@ export class AppointmentService {
           adminUserIds,
         });
       } catch (err: any) {
-        // Notification failure should not block reschedule
+        logger.error(`[APPOINTMENT] Reschedule notification failed: ${err?.message ?? err}`);
       }
     }
 
@@ -1109,7 +1146,7 @@ export class AppointmentService {
           adminUserIds,
         });
       } catch (err: any) {
-        // Notification failure should not block deletion
+        logger.error(`[APPOINTMENT] Deletion notification failed: ${err?.message ?? err}`);
       }
     }
   }
@@ -1135,6 +1172,7 @@ export class AppointmentService {
 
     // Clinic-wide operating days gate: if the clinic is closed this weekday, no
     // slots are offered regardless of individual staff schedules.
+    const businessHours = await this.getBusinessHours();
     const closedWeekdays = await this.getClosedWeekdays();
     if (closedWeekdays.has(this.weekdayOf(date))) {
       const busy = await prisma.appointments.findMany({
@@ -1146,9 +1184,15 @@ export class AppointmentService {
         staff_id: staffId ?? undefined,
         service_id: serviceId,
         closed: true,
+        closed_reason: 'The clinic is closed on this day.',
         duration_minutes: durationOverride || service.duration_minutes,
         available_slots: [],
         booked_appointments: busy,
+        business_hours: {
+          start: businessHours.start,
+          end: businessHours.end,
+          label: this.formatHoursLabel(businessHours),
+        },
       };
     }
 
@@ -1194,6 +1238,12 @@ export class AppointmentService {
     const isToday = date === this.localDateString();
     const nowMin = this.timeToMinutes(this.localTimeString());
 
+    // Store hours bound the bookable window. A specialist scheduled past
+    // closing (or a shift that starts before opening) must not offer slots the
+    // clinic cannot actually serve.
+    const openMin = this.timeToMinutes(businessHours.start);
+    const closeMin = this.timeToMinutes(businessHours.end);
+
     const availableSlots: Array<{
       start: string;
       end: string;
@@ -1221,6 +1271,13 @@ export class AppointmentService {
       const shiftEndMin = this.timeToMinutes(schedule.end_time);
       if (shiftEndMin <= shiftStartMin) continue;
 
+      // Clamp the staff shift to the clinic's opening hours. A shift that runs
+      // 10:00–22:00 with the store closing at 20:00 only yields slots up to
+      // 20:00 minus the service duration.
+      const windowStartMin = Math.max(shiftStartMin, openMin);
+      const windowEndMin = Math.min(shiftEndMin, closeMin);
+      if (windowEndMin <= windowStartMin) continue;
+
       const breakStart = schedule.break_start ? this.timeToMinutes(schedule.break_start) : null;
       const breakEnd = schedule.break_end ? this.timeToMinutes(schedule.break_end) : null;
 
@@ -1234,8 +1291,8 @@ export class AppointmentService {
         for (let m = aStart; m < aEnd; m++) booked.add(m);
       }
 
-      const lastStart = shiftEndMin - durationMinutes;
-      for (let s = shiftStartMin; s <= lastStart; s++) {
+      const lastStart = windowEndMin - durationMinutes;
+      for (let s = windowStartMin; s <= lastStart; s++) {
         if (isToday && s <= nowMin) continue;
 
         let free = true;
@@ -1271,6 +1328,13 @@ export class AppointmentService {
       duration_minutes: durationMinutes,
       available_slots: availableSlots,
       booked_appointments: existingAppointments,
+      // Store hours are echoed so the picker can explain a closed/out-of-hours
+      // choice instead of implying the specialist is already booked.
+      business_hours: {
+        start: businessHours.start,
+        end: businessHours.end,
+        label: this.formatHoursLabel(businessHours),
+      },
     };
   }
 
@@ -1367,7 +1431,9 @@ private async validateUpdateWindow(
 
     // A booking may never be moved to a specialist who is off on the effective
     // date, and the window must fit their shift and break — enforced for both
-    // updates here and creates in resolveStaff.
+    // updates here and creates in resolveStaff. The store-hours gate runs first
+    // so an out-of-hours move reports the correct reason.
+    await this.assertWithinBusinessHours(startTime, endTime);
     await this.assertStaffWorkable(staffId, appointmentDate, startTime, endTime);
 
     const conflicts = await prisma.appointments.findMany({
@@ -1631,6 +1697,48 @@ private async validateUpdateWindow(
     return new Set([0, 1, 2, 3, 4, 5, 6].filter((n) => !openSet.has(n)));
   }
 
+  // The clinic's opening/closing time for a day, from the `business_hours_start`
+  // / `business_hours_end` system settings. Defaults mirror the seed (10:00 and
+  // 20:00) so a database without the settings still behaves sensibly. These are
+  // the *store* hours; individual specialists may be scheduled within them.
+  private async getBusinessHours(): Promise<{ start: string; end: string }> {
+    const rows = await prisma.system_settings.findMany({
+      where: { setting_key: { in: ['business_hours_start', 'business_hours_end'] } },
+    });
+    const byKey = new Map(rows.map((r) => [r.setting_key, String(r.setting_value).replace(/^"|"$/g, '')]));
+    const start = byKey.get('business_hours_start') || '10:00';
+    const end = byKey.get('business_hours_end') || '20:00';
+    return { start, end };
+  }
+
+  private formatHoursLabel(hours: { start: string; end: string }): string {
+    const label = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      const period = h >= 12 ? 'PM' : 'AM';
+      const hour = h % 12 || 12;
+      return `${hour}:${String(m).padStart(2, '0')} ${period}`;
+    };
+    return `${label(hours.start)}–${label(hours.end)}`;
+  }
+
+  // Rejects a booking window that falls outside the clinic's opening hours.
+  // Staff shifts are validated separately; this is the store-level gate so a
+  // late shift can never expose post-closing slots (e.g. 10 PM after an 8 PM
+  // close), which previously surfaced as a misleading staff-conflict error.
+  private async assertWithinBusinessHours(startTime: string, endTime: string): Promise<void> {
+    const hours = await this.getBusinessHours();
+    const openMin = this.timeToMinutes(hours.start);
+    const closeMin = this.timeToMinutes(hours.end);
+    const startMin = this.timeToMinutes(startTime);
+    const endMin = this.timeToMinutes(endTime);
+    if (startMin < openMin || endMin > closeMin) {
+      throw new AppError(
+        `The clinic is open ${this.formatHoursLabel(hours)}. Please choose a time within these hours.`,
+        422
+      );
+    }
+  }
+
   private timeToMinutes(time: string): number {
     const [hours, minutes] = time.split(':').map(Number);
     return hours * 60 + minutes;
@@ -1662,6 +1770,16 @@ private async validateUpdateWindow(
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // `appointment_date` is stored as a DATE column at UTC midnight, so read its
+  // UTC parts when comparing to a bare YYYY-MM-DD — a local read would shift
+  // the day for timezones behind UTC.
+  private dateStringOf(date: Date): string {
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
 

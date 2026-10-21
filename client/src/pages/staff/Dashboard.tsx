@@ -38,7 +38,7 @@ export default function Dashboard() {
   const fetchTodayAppointments = async () => {
     try {
       const today = dayjs().format('YYYY-MM-DD');
-      const params: Record<string, string> = { date: today };
+      const params: Record<string, string> = { date_from: today, date_to: today };
       if (user?.staff?.id) params.staff_id = String(user.staff.id);
       const { data } = await appointmentsApi.list(params);
       setAppointments(data.data || []);

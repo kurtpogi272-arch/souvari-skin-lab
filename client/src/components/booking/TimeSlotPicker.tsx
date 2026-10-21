@@ -23,6 +23,10 @@ interface TimeSlotPickerProps {
   selectedStaffId?: number;
   onSelectStaff?: (staffId: number) => void;
   date?: string;
+  /** Store opening/closing hours, echoed by the availability endpoint. */
+  businessHours?: { start: string; end: string; label: string } | null;
+  /** Set when the selected day is a closed day (weekday the clinic is shut). */
+  closedReason?: string | null;
 }
 
 type Meridiem = 'AM' | 'PM';
@@ -169,6 +173,8 @@ export default function TimeSlotPicker({
   selectedStaffId,
   onSelectStaff,
   date,
+  businessHours = null,
+  closedReason = null,
 }: TimeSlotPickerProps) {
   const isPast = (start: string) => date === localToday() && start <= localNow();
 
@@ -286,6 +292,31 @@ export default function TimeSlotPicker({
     const start = `${String(toHour24(temp.h12, temp.mer)).padStart(2, '0')}:${String(temp.min).padStart(2, '0')}`;
     return slots.find((s) => s.start === start) ?? null;
   }, [temp, slots]);
+
+  // Why a spun time cannot be booked, phrased for the customer. Distinguishes a
+  // closed day, an out-of-hours pick, a past time, and a genuine staff conflict
+  // so the message never blames the specialist for the store being shut.
+  const unavailableReason = useMemo((): string | null => {
+    if (!temp) return null;
+    const h24 = toHour24(temp.h12, temp.mer);
+    const start = `${String(h24).padStart(2, '0')}:${String(temp.min).padStart(2, '0')}`;
+
+    if (closedReason) return closedReason;
+    if (isPast(start)) return 'This time has already passed. Please choose a later time.';
+
+    if (businessHours?.start && businessHours?.end) {
+      const toMin = (t: string) => {
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+      };
+      const pick = h24 * 60 + temp.min;
+      if (pick < toMin(businessHours.start) || pick >= toMin(businessHours.end)) {
+        return `We're closed at this time. Our hours are ${businessHours.label}.`;
+      }
+    }
+
+    return 'This time is not available with the selected specialist. Please pick another time.';
+  }, [temp, closedReason, businessHours, date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleConfirm = () => {
     if (!exactSlot) return;
@@ -474,7 +505,7 @@ export default function TimeSlotPicker({
                           </>
                         ) : (
                           <span className="text-red-600">
-                            This staff member is already booked for this time slot.
+                            {unavailableReason}
                           </span>
                         )
                       ) : (

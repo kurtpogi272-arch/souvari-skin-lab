@@ -120,6 +120,9 @@ export const listAppointmentsQuerySchema = z.object({
   staff_id: z.coerce.number().int().positive().optional(),
   service_id: z.coerce.number().int().positive().optional(),
   status: z.string().optional(),
+  // A single calendar day (YYYY-MM-DD), a convenience alias for a one-day
+  // date_from/date_to range. The list service expands it to both bounds.
+  date: z.string().optional(),
   date_from: z.string().optional(),
   date_to: z.string().optional(),
   sort_by: z.enum(['appointment_date', 'created_at', 'start_time']).optional(),

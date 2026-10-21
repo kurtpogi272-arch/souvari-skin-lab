@@ -12,6 +12,7 @@ export interface SMSLogData {
 }
 
 import { env } from '../config/env';
+import logger from '../utils/logger';
 
 let cachedProvider: ISMSProvider | null = null;
 
@@ -25,6 +26,12 @@ export function getSMSProvider(): ISMSProvider {
     const { TextBeeSMSProvider } = require('./textbee-sms.provider');
     cachedProvider = new TextBeeSMSProvider();
   } else {
+    // No usable provider configured: fall back to the mock, which reports
+    // success without delivering anything. Log loudly so "SMS sent" is never
+    // mistaken for a real delivery when credentials are missing or wrong.
+    logger.warn(
+      `[SMS] Provider "${env.SMS_PROVIDER}" is not fully configured; using MOCK provider — messages will NOT be delivered.`
+    );
     const { MockSMSProvider } = require('./mock-sms.provider');
     cachedProvider = new MockSMSProvider();
   }
