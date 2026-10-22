@@ -33,6 +33,7 @@ interface Transaction {
   reference_number?: string;
   transaction_number: string;
   created_at: string;
+  appointment?: { appointment_date: string } | null;
   customer: { id: number; first_name: string; last_name: string } | null;
   items: TransactionItem[];
   total: number;
@@ -301,7 +302,7 @@ export default function Transactions() {
                         <td className="px-6 py-4 text-neutral-400">
                           {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </td>
-                        <td className="px-6 py-4 text-neutral-600">{dayjs(txn.created_at).format('MMM D, YYYY')}</td>
+                        <td className="px-6 py-4 text-neutral-600">{dayjs(txn.appointment?.appointment_date || txn.created_at).format('MMM D, YYYY')}</td>
                         <td className="px-6 py-4 font-mono text-xs text-neutral-600">{txn.transaction_number || txn.reference_number || '—'}</td>
                         <td className="px-6 py-4 font-medium text-neutral-900">
                           {txn.customer ? `${txn.customer.first_name} ${txn.customer.last_name}` : 'Walk-in'}

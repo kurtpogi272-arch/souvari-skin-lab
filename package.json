@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
+    "docx": "^9.13.0",
     "playwright-chromium": "^1.62.1"
   }
 }

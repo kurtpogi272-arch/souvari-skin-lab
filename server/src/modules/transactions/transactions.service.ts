@@ -361,6 +361,11 @@ export class TransactionService {
       ];
     }
 
+    // Date-range clauses are accumulated separately so the search OR (if any)
+    // stays an independent condition and is combined with AND, not merged into
+    // a single OR that would widen the result set.
+    const andConditions: any[] = [];
+
     if (customer) {
       const matchingCustomers = await prisma.customers.findMany({
         where: {
@@ -389,17 +394,42 @@ export class TransactionService {
     if (appointment_id) where.appointment_id = appointment_id;
 
     if (date_from || date_to) {
-      where.created_at = {};
       // Clinic-calendar bounds, not host-local or raw UTC midnight, so the rows a
       // range returns are exactly the rows by_day groups under those days.
+      const createdBounds: any = {};
       if (date_from) {
         const from = clinicDayStartUtc(date_from);
-        if (from) where.created_at.gte = from;
+        if (from) createdBounds.gte = from;
       }
       if (date_to) {
         const to = clinicDayEndUtc(date_to);
-        if (to) where.created_at.lte = to;
+        if (to) createdBounds.lte = to;
       }
+
+      const apptBounds: any = {};
+      if (date_from) {
+        const from = clinicDayStartUtc(date_from);
+        if (from) apptBounds.gte = from;
+      }
+      if (date_to) {
+        const to = clinicDayEndUtc(date_to);
+        if (to) apptBounds.lte = to;
+      }
+
+      // A visit can be paid on a different day than it was booked, and imported
+      // records may carry an unrelated created_at. An appointment-linked sale
+      // therefore belongs to the appointment's day; standalone POS/walk-in sales
+      // have no appointment and keep filtering on when they were recorded.
+      andConditions.push({
+        OR: [
+          { appointment: { appointment_date: apptBounds } },
+          { appointment_id: null, created_at: createdBounds },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     return where;
@@ -434,6 +464,9 @@ export class TransactionService {
               service: { select: { id: true, name: true, price: true } },
             },
           },
+          // Lets the client show the visit date for appointment-linked sales
+          // instead of the record timestamp.
+          appointment: { select: { appointment_date: true } },
         },
         orderBy,
         skip: pagination.skip,
@@ -497,6 +530,9 @@ export class TransactionService {
         notes: true,
         customer: { select: { id: true, first_name: true, last_name: true } },
         staff: { select: { id: true, first_name: true, last_name: true } },
+        // An appointment-linked sale is reported under the visit date, so the
+        // day buckets and period match the date filter above.
+        appointment: { select: { appointment_date: true } },
         // Only the count is rendered, so the line detail is left out to keep the
         // response small on large date ranges.
         items: { select: { id: true } },
@@ -510,7 +546,7 @@ export class TransactionService {
       type: t.type,
       payment_status: t.payment_status,
       payment_method: t.payment_method,
-      created_at: t.created_at,
+      created_at: t.appointment?.appointment_date ?? t.created_at,
       subtotal: t.subtotal,
       discount_amount: t.discount_amount,
       tax_amount: t.tax_amount,

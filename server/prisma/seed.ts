@@ -400,6 +400,9 @@ async function main() {
         payment_method: randomItem(['cash', 'cash', 'gcash', 'paid_on_us']),
         payment_status: 'paid',
         paid_at: appt.appointment_date,
+        // Match the record timestamp to the visit so the transactions report,
+        // which filters on created_at, files the sale under the appointment day.
+        created_at: appt.appointment_date,
         items: {
           create: [{
             service_id: appt.service_id,
