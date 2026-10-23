@@ -31,7 +31,7 @@ export default function ForgotPassword() {
     try {
       const response = await authApi.forgotPassword(email.trim().toLowerCase());
       setCode('');
-      setCooldown(60);
+      setCooldown(response.data.data?.retryAfterSeconds ?? 60);
       setNotice(response.data.message);
       setStep('code');
     } catch (err: any) {

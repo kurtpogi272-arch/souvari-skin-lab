@@ -58,10 +58,13 @@ On the **web service → Variables** tab add:
 | `REMINDERS_ENABLED` | `true` |
 | `REMINDER_RUN_HOUR` | `8` |
 | `TZ` | `Asia/Manila` |
-| `MAIL_HOST` | SMTP hostname, e.g. `smtp.gmail.com` |
-| `MAIL_PORT` | `587` for STARTTLS or `465` for implicit TLS |
-| `MAIL_USER` | authenticated sender email address |
-| `MAIL_PASS` | SMTP password (a Gmail app password when using Gmail) |
+| `MAIL_PROVIDER` | `resend` for Railway Free/Trial/Hobby; `smtp` where outbound SMTP is allowed; default `auto` selects Resend when its key is present |
+| `RESEND_API_KEY` | Resend sending API key, needed for `resend` |
+| `MAIL_FROM_EMAIL` | address on your verified Resend domain, e.g. `notifications@souvari-skin-lab.site` |
+| `MAIL_HOST` | SMTP only: hostname, e.g. `smtp.gmail.com` |
+| `MAIL_PORT` | SMTP only: `587` for STARTTLS or `465` for implicit TLS |
+| `MAIL_USER` | clinic inbox for Contact messages; also the authenticated sender when using SMTP |
+| `MAIL_PASS` | SMTP only: password (a Gmail app password when using Gmail) |
 | `MAIL_FROM_NAME` | `Souvari Skin Lab` |
 
 Generate secrets locally:
@@ -87,8 +90,48 @@ Souvari login page.
 
 The login page links to `/forgot-password`. Recovery is restricted to active,
 non-deleted **customer** accounts; staff and admin accounts cannot reset through
-these endpoints. The Contact form and password recovery share the SMTP settings
-listed above. Enter credentials in Railway Variables, not in source control.
+these endpoints. Unknown, deleted, and staff/admin addresses return **404** with
+"No customer account found with this email address." Inactive customers receive
+an account-inactive message. These checks run before email setup and no OTP is
+created or sent for an ineligible account.
+
+The Contact form and password recovery share the email delivery service. Enter
+credentials in Railway Variables, not in source control.
+
+#### Railway email transport
+
+[Railway blocks outbound SMTP on Free, Trial, and Hobby plans](https://docs.railway.com/reference/outbound-networking).
+A Gmail SMTP check on a developer's laptop can therefore pass while the deployed
+app times out. Changing SMTP ports does not remove this restriction.
+
+Use the Resend HTTPS API instead:
+
+1. Create a [Resend](https://resend.com/) account. Its free transactional plan
+   currently includes 3,000 emails/month with a 100-email/day limit.
+2. Add your sending domain in Resend and add the exact verification DNS records
+   it supplies in Cloudflare. Wait for the domain to show **Verified**.
+3. Create a sending API key and enter these Railway web-service variables:
+
+   ```env
+   MAIL_PROVIDER=resend
+   RESEND_API_KEY=<your Resend API key>
+   MAIL_FROM_EMAIL=notifications@souvari-skin-lab.site
+   MAIL_FROM_NAME=Souvari Skin Lab
+   ```
+
+   Use an address on the domain you actually verified. The Resend onboarding
+   sender is restricted to testing with the account owner's email; it will not
+   work as a general customer OTP sender. For the Contact form, retain
+   `MAIL_USER` as the clinic's receiving inbox.
+4. Deploy this code and apply the variables, then request an OTP using an active
+   customer account you control. Check Resend's email activity if it is accepted
+   but does not appear in the inbox.
+
+No SMTP credentials or Android/SIM gateway are needed when using Resend. If
+`MAIL_PROVIDER=auto`, a configured `RESEND_API_KEY` selects Resend; otherwise SMTP
+is used. On Railway, explicitly setting `resend` avoids an accidental SMTP
+fallback when a key is missing. No automatic fallback or retry sends duplicate
+OTP emails after an ambiguous provider failure.
 
 The `20261023150000_add_customer_password_reset` migration adds a bounded
 one-request-per-user table and `users.auth_version`. The Docker startup applies
@@ -118,9 +161,14 @@ Recovery behaviour:
 
 After deployment, test with an active customer email you control: request an
 OTP, confirm inbox/spam receipt, verify the code, reset the password, and sign in.
-Do not test using a real customer's account without their involvement. If email
-cannot be sent, verify SMTP credentials and outbound SMTP connectivity from the
-Railway service; a successful local SMTP check does not confirm Railway delivery.
+Also enter an unregistered address and confirm the form stays on the email step
+with the no-customer-account message.
+
+Provider failures leave safe diagnostics in the application logs: Resend HTTP
+status or SMTP error code/response code. Neither logs the OTP, email body, API
+key, nor SMTP password. For Resend failures, verify the API key, sender-domain
+verification, and quota. For SMTP on an eligible Railway plan, verify outbound
+connectivity and credentials from that service rather than only from the laptop.
 
 ## 6. Seed data (one time only)
 

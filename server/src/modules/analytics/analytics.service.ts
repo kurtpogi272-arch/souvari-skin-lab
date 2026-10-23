@@ -1,5 +1,14 @@
 import prisma from '../../config/database';
 import { RevenueQuery, AppointmentTrendsQuery, SummaryQuery } from './analytics.validation';
+import { clinicMonthRange, transactionDateFilter, transactionReportDate } from '../transactions/transaction-dates';
+import { clinicDayStartUtc, clinicDayEndUtc, toLocalDayKey } from '../transactions/transactions-report-math';
+
+function analyticsPeriod(startDate?: string, endDate?: string) {
+  const now = new Date();
+  const from = startDate ?? toLocalDayKey(new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000));
+  const to = endDate ?? toLocalDayKey(now);
+  return { from, to, start: clinicDayStartUtc(from)!, end: clinicDayEndUtc(to)! };
+}
 
 const DAY_INDEX: Record<string, number> = {
   sunday: 0,
@@ -18,9 +27,9 @@ const toMinutes = (time: string): number => {
 
 class AnalyticsService {
   async getDashboard() {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const month = clinicMonthRange();
+    const startOfMonth = clinicDayStartUtc(month.from)!;
+    const endOfMonth = clinicDayEndUtc(month.to)!;
 
     const [
       totalAppointments,
@@ -60,7 +69,7 @@ class AnalyticsService {
       }),
       prisma.transactions.aggregate({
         where: {
-          created_at: { gte: startOfMonth, lte: endOfMonth },
+          ...transactionDateFilter(month.from, month.to),
           payment_status: 'paid',
           deleted_at: null,
         },
@@ -93,18 +102,18 @@ class AnalyticsService {
   async getRevenue(query: RevenueQuery) {
     const { start_date, end_date, group_by } = query;
 
-    const start = start_date ? new Date(start_date) : new Date(new Date().setDate(new Date().getDate() - 30));
-    const end = end_date ? new Date(end_date + 'T23:59:59.000Z') : new Date();
+    const { from, to } = analyticsPeriod(start_date, end_date);
 
     const transactions = await prisma.transactions.findMany({
       where: {
-        created_at: { gte: start, lte: end },
+        ...transactionDateFilter(from, to),
         payment_status: 'paid',
         deleted_at: null,
       },
       select: {
         total_amount: true,
         created_at: true,
+        appointment: { select: { appointment_date: true } },
       },
       orderBy: { created_at: 'asc' },
     });
@@ -113,24 +122,24 @@ class AnalyticsService {
 
     for (const t of transactions) {
       let key: string;
-      const date = new Date(t.created_at);
+      const dayKey = toLocalDayKey(transactionReportDate(t));
 
       if (group_by === 'month') {
-        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        key = dayKey.slice(0, 7);
       } else if (group_by === 'week') {
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - date.getDay());
+        const weekStart = new Date(`${dayKey}T00:00:00.000Z`);
+        weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
         key = weekStart.toISOString().split('T')[0];
       } else {
-        key = date.toISOString().split('T')[0];
+        key = dayKey;
       }
 
       grouped[key] = (grouped[key] || 0) + Number(t.total_amount);
     }
 
-    const data = Object.entries(grouped).map(([date, revenue]) => ({
+    const data = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([date, revenue]) => ({
       date,
-      revenue,
+      revenue: Math.round(revenue * 100) / 100,
     }));
 
     return { data, group_by };
@@ -139,8 +148,7 @@ class AnalyticsService {
   async getAppointmentTrends(query: AppointmentTrendsQuery) {
     const { start_date, end_date } = query;
 
-    const start = start_date ? new Date(start_date) : new Date(new Date().setDate(new Date().getDate() - 30));
-    const end = end_date ? new Date(end_date + 'T23:59:59.000Z') : new Date();
+    const { start, end } = analyticsPeriod(start_date, end_date);
 
     const appointments = await prisma.appointments.findMany({
       where: {
@@ -252,17 +260,14 @@ class AnalyticsService {
   async getSummary(query: SummaryQuery) {
     const { start_date, end_date } = query;
 
-    const start = start_date
-      ? new Date(start_date)
-      : new Date(new Date().setDate(new Date().getDate() - 30));
-    const end = end_date ? new Date(end_date + 'T23:59:59.000Z') : new Date();
+    const { from, to, start, end } = analyticsPeriod(start_date, end_date);
 
     const CANCELLED_LIKE = ['cancelled', 'no_show'];
 
     const [transactions, appointments, staffRows] = await Promise.all([
       prisma.transactions.findMany({
         where: {
-          created_at: { gte: start, lte: end },
+          ...transactionDateFilter(from, to),
           payment_status: 'paid',
           deleted_at: null,
         },
@@ -336,8 +341,8 @@ class AnalyticsService {
 
     // Build the ordered date keys for the range (pure YYYY-MM-DD strings, TZ-safe).
     const dateKeys: string[] = [];
-    const firstKey = start.toISOString().split('T')[0];
-    const lastKey = end.toISOString().split('T')[0];
+    const firstKey = from;
+    const lastKey = to;
     const cursor = new Date(firstKey + 'T00:00:00.000Z');
     const stop = new Date(lastKey + 'T00:00:00.000Z');
     while (cursor <= stop) {

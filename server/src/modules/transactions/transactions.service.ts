@@ -14,9 +14,8 @@ import {
   groupTotals,
   groupByDay,
   resolvePeriod,
-  clinicDayStartUtc,
-  clinicDayEndUtc,
 } from './transactions-report-math';
+import { transactionDateFilter, transactionReportDate } from './transaction-dates';
 import { Decimal } from '@prisma/client/runtime/library';
 import { notificationDispatch } from '../../services/notification-dispatch.service';
 
@@ -361,11 +360,6 @@ export class TransactionService {
       ];
     }
 
-    // Date-range clauses are accumulated separately so the search OR (if any)
-    // stays an independent condition and is combined with AND, not merged into
-    // a single OR that would widen the result set.
-    const andConditions: any[] = [];
-
     if (customer) {
       const matchingCustomers = await prisma.customers.findMany({
         where: {
@@ -393,44 +387,7 @@ export class TransactionService {
     if (staff_id) where.staff_id = staff_id;
     if (appointment_id) where.appointment_id = appointment_id;
 
-    if (date_from || date_to) {
-      // Clinic-calendar bounds, not host-local or raw UTC midnight, so the rows a
-      // range returns are exactly the rows by_day groups under those days.
-      const createdBounds: any = {};
-      if (date_from) {
-        const from = clinicDayStartUtc(date_from);
-        if (from) createdBounds.gte = from;
-      }
-      if (date_to) {
-        const to = clinicDayEndUtc(date_to);
-        if (to) createdBounds.lte = to;
-      }
-
-      const apptBounds: any = {};
-      if (date_from) {
-        const from = clinicDayStartUtc(date_from);
-        if (from) apptBounds.gte = from;
-      }
-      if (date_to) {
-        const to = clinicDayEndUtc(date_to);
-        if (to) apptBounds.lte = to;
-      }
-
-      // A visit can be paid on a different day than it was booked, and imported
-      // records may carry an unrelated created_at. An appointment-linked sale
-      // therefore belongs to the appointment's day; standalone POS/walk-in sales
-      // have no appointment and keep filtering on when they were recorded.
-      andConditions.push({
-        OR: [
-          { appointment: { appointment_date: apptBounds } },
-          { appointment_id: null, created_at: createdBounds },
-        ],
-      });
-    }
-
-    if (andConditions.length > 0) {
-      where.AND = andConditions;
-    }
+    Object.assign(where, transactionDateFilter(date_from, date_to));
 
     return where;
   }
@@ -546,7 +503,7 @@ export class TransactionService {
       type: t.type,
       payment_status: t.payment_status,
       payment_method: t.payment_method,
-      created_at: t.appointment?.appointment_date ?? t.created_at,
+      created_at: transactionReportDate(t),
       subtotal: t.subtotal,
       discount_amount: t.discount_amount,
       tax_amount: t.tax_amount,

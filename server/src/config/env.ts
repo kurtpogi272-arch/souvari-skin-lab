@@ -27,6 +27,9 @@ const envSchema = z.object({
   MAIL_USER: z.string().default(''),
   MAIL_PASS: z.string().default(''),
   MAIL_FROM_NAME: z.string().default('Souvari Skin Lab'),
+  MAIL_PROVIDER: z.enum(['auto', 'smtp', 'resend']).default('auto'),
+  MAIL_FROM_EMAIL: z.string().trim().default(''),
+  RESEND_API_KEY: z.string().trim().default(''),
   REVIEW_URL: z.string().optional().default(''),
 });
 

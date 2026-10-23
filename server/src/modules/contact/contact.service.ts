@@ -1,4 +1,4 @@
-import { getMailTransporter as getTransporter } from '../../services/email.service';
+import { assertEmailConfigured, emailService } from '../../services/email.service';
 import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
 import logger from '../../utils/logger';
@@ -6,9 +6,10 @@ import { SendContactMessageInput } from './contact.validation';
 
 class ContactService {
   async sendMessage(data: SendContactMessageInput): Promise<void> {
-    if (!env.MAIL_USER || !env.MAIL_PASS) {
+    if (!env.MAIL_USER) {
       throw new AppError('Email service is not configured', 503);
     }
+    assertEmailConfigured();
 
     // Email to the clinic (inbound contact notification)
     const clinicMail = {
@@ -69,8 +70,8 @@ class ContactService {
 
     try {
       const [clinicInfo, customerInfo] = await Promise.all([
-        getTransporter().sendMail(clinicMail),
-        getTransporter().sendMail(customerMail),
+        emailService.sendMail(clinicMail),
+        emailService.sendMail(customerMail),
       ]);
       logger.info(`Contact email sent to clinic ${env.MAIL_USER} (${clinicInfo.messageId}) and customer ${data.email} (${customerInfo.messageId})`);
     } catch (error) {

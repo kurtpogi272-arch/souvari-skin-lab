@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 import prisma from '../../config/database';
 import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
-import { emailService, getMailTransporter } from '../../services/email.service';
+import { emailService, assertEmailConfigured } from '../../services/email.service';
 import { hashPassword } from '../../utils/password';
 import logger from '../../utils/logger';
 
@@ -22,26 +22,29 @@ function hashToken(token: string): string {
 }
 
 export class PasswordResetService {
-  async requestCode(email: string): Promise<void> {
-    // Check availability for every address so configuration failures do not reveal accounts.
-    getMailTransporter();
+  async requestCode(email: string): Promise<{ sent: boolean; retryAfterSeconds: number }> {
     const requestId = randomBytes(32).toString('hex');
     const code = randomInt(0, 1000000).toString().padStart(6, '0');
     const user = await prisma.users.findUnique({ where: { email } });
-    if (!user || user.role !== 'customer' || user.status !== 'active' || user.deleted_at) {
-      return;
+    if (!user || user.role !== 'customer' || user.deleted_at) {
+      throw new AppError('No customer account found with this email address.', 404);
     }
+    if (user.status !== 'active') throw new AppError('This customer account is not active. Please contact the clinic.', 403);
+    // Validate the account first: unknown/staff/admin addresses never reach email setup or delivery.
+    assertEmailConfigured();
 
     const result = await prisma.$transaction(async (tx) => {
       // Serialize requests for this customer, including requests on multiple app instances.
       await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
       const currentUser = await tx.users.findUnique({ where: { id: user.id } });
       if (!currentUser || currentUser.email !== email || currentUser.role !== 'customer' ||
-        currentUser.status !== 'active' || currentUser.deleted_at) return null;
+        currentUser.status !== 'active' || currentUser.deleted_at) {
+        throw new AppError('No active customer account found with this email address.', 404);
+      }
       const previous = await tx.password_reset_requests.findUnique({ where: { user_id: user.id } });
       const now = new Date();
       if (previous && now.getTime() - previous.last_sent_at.getTime() < RESEND_COOLDOWN_MS) {
-        return false;
+        return { sent: false, retryAfterSeconds: Math.ceil((RESEND_COOLDOWN_MS - (now.getTime() - previous.last_sent_at.getTime())) / 1000) };
       }
       const data = {
         id: requestId, otp_hash: hashCode(requestId, code),
@@ -51,10 +54,10 @@ export class PasswordResetService {
       await tx.password_reset_requests.upsert({
         where: { user_id: user.id }, create: { ...data, user_id: user.id }, update: data,
       });
-      return true;
+      return { sent: true, retryAfterSeconds: RESEND_COOLDOWN_MS / 1000 };
     });
 
-    if (result) {
+    if (result.sent) {
       try {
         await emailService.sendPasswordResetCode(email, code);
       } catch {
@@ -64,6 +67,7 @@ export class PasswordResetService {
         throw new AppError('Unable to send the verification email. Please try again later.', 503);
       }
     }
+    return result;
   }
 
   async verifyCode(email: string, code: string): Promise<{ resetToken: string }> {

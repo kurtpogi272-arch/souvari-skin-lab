@@ -5,10 +5,13 @@ import { passwordResetService } from './password-reset.service';
 export class AuthController {
   async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      await passwordResetService.requestCode(req.body.email);
+      const result = await passwordResetService.requestCode(req.body.email);
       res.set('Cache-Control', 'no-store').json({
         success: true,
-        message: 'If this email belongs to an active customer account, a verification code has been sent. Check your inbox and spam folder.',
+        message: result.sent
+          ? 'A verification code has been sent to your customer account email. Check your inbox and spam folder.'
+          : 'A code was requested recently. Please use the latest code in your email or wait before resending.',
+        data: { retryAfterSeconds: result.retryAfterSeconds },
       });
     } catch (error) { next(error); }
   }

@@ -14,7 +14,7 @@ vi.mock('../../config/database', () => ({
 }));
 vi.mock('../../config/env', () => ({ env: { JWT_ACCESS_SECRET: 'test-otp-hmac-secret' } }));
 vi.mock('../../services/email.service', () => ({
-  getMailTransporter: mocks.transporter,
+  assertEmailConfigured: mocks.transporter,
   emailService: { sendPasswordResetCode: mocks.sendMail },
 }));
 vi.mock('../../utils/password', () => ({ hashPassword: mocks.hashPassword }));
@@ -62,8 +62,10 @@ describe('customer email OTP recovery', () => {
     else if (type === 'deleted') user.deleted_at = new Date();
     else if (type === 'inactive') user.status = 'inactive';
     else user.role = type;
-    const result = await service.requestCode('customer@example.com');
-    expect(result).toBeUndefined();
+    await expect(service.requestCode('customer@example.com')).rejects.toThrow(
+      type === 'inactive' ? 'not active' : 'No customer account found',
+    );
+    expect(mocks.transporter).not.toHaveBeenCalled();
     expect(mocks.sendMail).not.toHaveBeenCalled();
     expect(mocks.resets.upsert).not.toHaveBeenCalled();
   });
@@ -80,7 +82,8 @@ describe('customer email OTP recovery', () => {
   it('enforces the resend cooldown without sending a second email', async () => {
     const first = await request();
     const second = await service.requestCode(user.email);
-    expect(second).toBeUndefined();
+    expect(second.sent).toBe(false);
+    expect(second.retryAfterSeconds).toBeGreaterThan(0);
     expect(stored.id).toBe(first.requestId);
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });
@@ -161,6 +164,19 @@ describe('customer email OTP recovery', () => {
     mocks.sendMail.mockRejectedValue(new Error('SMTP unavailable'));
     await expect(service.requestCode(user.email)).rejects.toThrow('Unable to send');
     expect(mocks.resets.deleteMany).toHaveBeenCalledWith({ where: { id: stored.id } });
+  });
+
+  it('reports success only after the provider accepts an email for an active customer', async () => {
+    const result = await service.requestCode(user.email);
+    expect(result).toEqual({ sent: true, retryAfterSeconds: 60 });
+    expect(mocks.sendMail).toHaveBeenCalledExactlyOnceWith(user.email, expect.stringMatching(/^\d{6}$/));
+  });
+
+  it('does not create an OTP request if email delivery is not configured', async () => {
+    mocks.transporter.mockImplementation(() => { throw new Error('Email service is not configured'); });
+    await expect(service.requestCode(user.email)).rejects.toThrow('not configured');
+    expect(mocks.resets.upsert).not.toHaveBeenCalled();
+    expect(mocks.sendMail).not.toHaveBeenCalled();
   });
 });
 
