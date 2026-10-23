@@ -14,6 +14,7 @@ import BookingPage from './pages/public/BookingPage';
 import BookingConfirmation from './pages/public/BookingConfirmation';
 import MembershipPlans from './pages/public/MembershipPlans';
 import Login from './pages/auth/Login';
+import ForgotPassword from './pages/auth/ForgotPassword';
 import Register from './pages/auth/Register';
 
 import CustomerDashboard from './pages/customer/Dashboard';
@@ -80,6 +81,7 @@ export default function App() {
       </Route>
 
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/register" element={<Register />} />
 
       {/* Customer */}

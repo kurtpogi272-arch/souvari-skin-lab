@@ -14,6 +14,7 @@ model users {
   id              Int       @id @default(autoincrement())
   email           String    @unique @db.VarChar(255)
   password_hash   String    @db.VarChar(255)
+  auth_version    Int       @default(0)
   role            UserRole  @default(customer)
   status          UserStatus @default(active)
   // Unique across every role so a customer cannot claim a staff member's
@@ -31,10 +32,24 @@ model users {
   sms_logs        sms_logs[]
   chat_sessions   chat_sessions[]
   inventory_movements inventory_movements[] @relation("performed_by_user")
+  password_reset  password_reset_requests?
 
   @@index([role])
   @@index([status])
   @@index([deleted_at])
+}
+
+model password_reset_requests {
+  id               String   @id @db.VarChar(64)
+  user_id          Int      @unique
+  otp_hash         String   @db.Char(64)
+  expires_at       DateTime
+  attempts         Int      @default(0)
+  last_sent_at     DateTime @default(now())
+  verified_at      DateTime?
+  reset_token_hash String?  @unique @db.Char(64)
+  consumed_at      DateTime?
+  user             users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
 
 enum UserRole {

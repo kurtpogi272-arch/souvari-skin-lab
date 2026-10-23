@@ -1,7 +1,33 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from './auth.service';
+import { passwordResetService } from './password-reset.service';
 
 export class AuthController {
+  async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await passwordResetService.requestCode(req.body.email);
+      res.set('Cache-Control', 'no-store').json({
+        success: true,
+        message: 'If this email belongs to an active customer account, a verification code has been sent. Check your inbox and spam folder.',
+      });
+    } catch (error) { next(error); }
+  }
+
+  async verifyResetCode(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await passwordResetService.verifyCode(req.body.email, req.body.code);
+      res.set('Cache-Control', 'no-store').json({ success: true, data: result });
+    } catch (error) { next(error); }
+  }
+
+  async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await passwordResetService.resetPassword(req.body.resetToken, req.body.password);
+      res.clearCookie('refreshToken');
+      res.set('Cache-Control', 'no-store').json({ success: true, message: 'Password reset successfully. Please sign in with your new password.' });
+    } catch (error) { next(error); }
+  }
+
   async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await authService.register(req.body);

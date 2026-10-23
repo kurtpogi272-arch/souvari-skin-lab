@@ -58,6 +58,11 @@ On the **web service → Variables** tab add:
 | `REMINDERS_ENABLED` | `true` |
 | `REMINDER_RUN_HOUR` | `8` |
 | `TZ` | `Asia/Manila` |
+| `MAIL_HOST` | SMTP hostname, e.g. `smtp.gmail.com` |
+| `MAIL_PORT` | `587` for STARTTLS or `465` for implicit TLS |
+| `MAIL_USER` | authenticated sender email address |
+| `MAIL_PASS` | SMTP password (a Gmail app password when using Gmail) |
+| `MAIL_FROM_NAME` | `Souvari Skin Lab` |
 
 Generate secrets locally:
 
@@ -77,6 +82,45 @@ Click **Deploy** and wait. The container:
 Railway's health check hits `/api/health`. When the deploy shows **Healthy**,
 open your service URL (`https://<service>.up.railway.app`) — you should see the
 Souvari login page.
+
+### Customer forgot-password email OTP
+
+The login page links to `/forgot-password`. Recovery is restricted to active,
+non-deleted **customer** accounts; staff and admin accounts cannot reset through
+these endpoints. The Contact form and password recovery share the SMTP settings
+listed above. Enter credentials in Railway Variables, not in source control.
+
+The `20261023150000_add_customer_password_reset` migration adds a bounded
+one-request-per-user table and `users.auth_version`. The Docker startup applies
+it through `prisma migrate deploy`; confirm it succeeds before testing the new
+authentication code. For a manual/local deployment:
+
+```bash
+npm run db:generate --prefix server
+npm exec --prefix server -- prisma migrate deploy --schema server/prisma/schema.prisma
+npm run build --prefix server
+npm run build --prefix client
+```
+
+Recovery behaviour:
+
+- Email OTP: six digits, valid for 10 minutes, at most five incorrect attempts.
+- Resend: at least 60 seconds between emails for a customer; a resend replaces
+  the previous OTP and any pending reset token.
+- Request limit: five requests per IP per 15 minutes; verification/reset limit:
+  30 requests per IP per 15 minutes (in-memory limits per running app instance).
+- Verified reset session: valid for 10 minutes, single use. OTPs and reset
+  tokens are stored only as hashes; they are never returned by the request-code
+  endpoint or written to logs. The verification endpoint returns only the
+  short-lived reset token, held in page memory.
+- A successful password reset invalidates that customer's existing access and
+  refresh tokens. The customer signs in again with the new password.
+
+After deployment, test with an active customer email you control: request an
+OTP, confirm inbox/spam receipt, verify the code, reset the password, and sign in.
+Do not test using a real customer's account without their involvement. If email
+cannot be sent, verify SMTP credentials and outbound SMTP connectivity from the
+Railway service; a successful local SMTP check does not confirm Railway delivery.
 
 ## 6. Seed data (one time only)
 

@@ -1,25 +1,8 @@
-import nodemailer, { Transporter } from 'nodemailer';
+import { getMailTransporter as getTransporter } from '../../services/email.service';
 import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
 import logger from '../../utils/logger';
 import { SendContactMessageInput } from './contact.validation';
-
-let transporter: Transporter | null = null;
-
-function getTransporter(): Transporter {
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: env.MAIL_HOST,
-      port: env.MAIL_PORT,
-      secure: env.MAIL_PORT === 465,
-      auth: {
-        user: env.MAIL_USER,
-        pass: env.MAIL_PASS,
-      },
-    });
-  }
-  return transporter;
-}
 
 class ContactService {
   async sendMessage(data: SendContactMessageInput): Promise<void> {

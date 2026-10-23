@@ -5,6 +5,7 @@ export interface TokenPayload {
   userId: number;
   email: string;
   role: string;
+  authVersion?: number;
 }
 
 function toExpiresIn(value: string): SignOptions['expiresIn'] {

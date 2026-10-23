@@ -50,7 +50,7 @@ api.interceptors.response.use(
       // Credential failures on the login/register forms must surface their own
       // error instead of triggering a refresh-token round trip (which would
       // report a misleading "Refresh token not found").
-      if (originalRequest.url === '/auth/login' || originalRequest.url === '/auth/register') {
+      if (['/auth/login', '/auth/register', '/auth/forgot-password', '/auth/verify-reset-code', '/auth/reset-password'].includes(originalRequest.url)) {
         return Promise.reject(error);
       }
 

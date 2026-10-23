@@ -87,6 +87,11 @@ export default function Login() {
                 </button>
               </div>
               {errors.password && <p className="text-xs text-red-600 mt-1">{errors.password.message}</p>}
+              <div className="mt-2 text-right">
+                <Link to="/forgot-password" className="text-sm text-primary-700 hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             <button type="submit" disabled={isSubmitting} className="btn-primary w-full mt-3">

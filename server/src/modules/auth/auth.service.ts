@@ -36,7 +36,7 @@ export class AuthService {
       },
     });
 
-    const tokenPayload: TokenPayload = { userId: user.id, email: user.email, role: user.role };
+    const tokenPayload: TokenPayload = { userId: user.id, email: user.email, role: user.role, authVersion: user.auth_version };
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken(tokenPayload);
 
@@ -79,7 +79,7 @@ export class AuthService {
       data: { last_login_at: new Date() },
     });
 
-    const tokenPayload: TokenPayload = { userId: user.id, email: user.email, role: user.role };
+    const tokenPayload: TokenPayload = { userId: user.id, email: user.email, role: user.role, authVersion: user.auth_version };
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken(tokenPayload);
 
@@ -108,8 +108,11 @@ export class AuthService {
     if (!user || user.status !== 'active' || user.deleted_at) {
       throw new AppError('User not found or inactive', 401);
     }
+    if ((payload.authVersion ?? 0) !== user.auth_version) {
+      throw new AppError('Session expired. Please sign in again.', 401);
+    }
 
-    const tokenPayload: TokenPayload = { userId: user.id, email: user.email, role: user.role };
+    const tokenPayload: TokenPayload = { userId: user.id, email: user.email, role: user.role, authVersion: user.auth_version };
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken(tokenPayload);
 
