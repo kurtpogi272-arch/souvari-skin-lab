@@ -35,6 +35,20 @@ export const APPOINTMENT_CANCELLED_MESSAGE =
   "If you'd like to schedule another appointment, please contact us or book a new appointment. " +
   'We hope to welcome you soon!';
 
+/** Keep the cancellation SMS brief; detailed reasons are available in-app. */
+export function buildAppointmentCancelledSMS(appointmentDate: string, appointmentTime: string, reason?: string | null): string {
+  const message = `Hi this is Souvari Skin Lab, Your appointment for ${appointmentDate} at ${appointmentTime} has been cancelled. Please contact us to rebook.`;
+  const note = reason?.trim().replace(/\s+/g, ' ');
+  if (!note || note === CUSTOMER_CANCEL_REASON) return message;
+
+  const prefix = `${message} Reason: `;
+  const available = Math.max(0, 160 - prefix.length);
+  const shortened = note.length > available
+    ? `${note.slice(0, Math.max(0, available - 3)).trimEnd()}...`
+    : note;
+  return `${prefix}${shortened}`;
+}
+
 /** Appointment completed — thank-you and review request. */
 export const APPOINTMENT_COMPLETED_MESSAGE =
   'Thank you for visiting Souvari Skin Lab! We hope you enjoyed your experience with us. ' +

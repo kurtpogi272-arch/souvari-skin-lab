@@ -8,6 +8,7 @@ import {
   APPOINTMENT_BOOKED_MESSAGE,
   APPOINTMENT_CHECKED_IN_MESSAGE,
   APPOINTMENT_PLACED_MESSAGE,
+  buildAppointmentCancelledSMS,
   buildAppointmentCancelledMessage,
   buildAppointmentCompletedMessage,
   isCompletionAllowedFrom,
@@ -24,6 +25,8 @@ interface DispatchParams {
   data?: Record<string, any>;
   sendSMS?: boolean;
   smsPhone?: string;
+  /** Complete SMS body, including branding, when different from the in-app message. */
+  smsMessage?: string;
 }
 
 class NotificationDispatchService {
@@ -58,7 +61,7 @@ class NotificationDispatchService {
 
       try {
         const provider = getSMSProvider();
-        const smsText = `${SMS_GREETING} ${message}`;
+        const smsText = params.smsMessage ?? `${SMS_GREETING} ${message}`;
         const result = await provider.send(recipient, smsText);
 
         await prisma.sms_logs.create({
@@ -224,6 +227,7 @@ class NotificationDispatchService {
       type: 'appointment_update',
       title: 'Appointment Cancelled',
       message: customerMessage,
+      smsMessage: buildAppointmentCancelledSMS(appointmentDate, appointmentTime, reason),
       data: { appointment_id: appointmentId, new_status: 'cancelled', cancelled_by_customer: !!cancelledByCustomer },
       sendSMS: true,
       smsPhone: customerPhone ?? undefined,

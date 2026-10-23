@@ -16,6 +16,7 @@ export interface ISMSProvider {
    * skips their log rows. `externalId` is exactly what `send()` returned.
    */
   getStatus?(externalId: string): Promise<SMSDeliveryStatus | null>;
+  canTrack?(externalId: string): boolean;
 }
 
 export interface SMSLogData {

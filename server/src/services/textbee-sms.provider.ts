@@ -30,6 +30,10 @@ function mapTextBeeStatus(status: string | undefined | null): SMSDeliveryStatus[
 }
 
 export class TextBeeSMSProvider implements ISMSProvider {
+  canTrack(externalId: string): boolean {
+    return /^[a-f0-9]{24}:[a-f0-9]{24}$/i.test(externalId);
+  }
+
   private apiKey: string;
   private deviceId: string;
 

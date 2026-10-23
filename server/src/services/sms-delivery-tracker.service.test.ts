@@ -13,7 +13,10 @@ vi.mock('../config/database', () => ({
 }));
 
 vi.mock('./sms.service', () => ({
-  getSMSProvider: () => ({ getStatus }),
+  getSMSProvider: () => ({
+    getStatus,
+    canTrack: (id: string) => id.startsWith('device-123:') || /^semaphore:\d+$/.test(id),
+  }),
 }));
 
 import { smsDeliveryTrackerService } from './sms-delivery-tracker.service';
@@ -116,5 +119,27 @@ describe('sms-delivery-tracker', () => {
 
     expect(result.checked).toBe(0);
     expect(getStatus).not.toHaveBeenCalled();
+  });
+
+  it('records network acceptance for a Semaphore message without marking it delivered', async () => {
+    findMany.mockResolvedValue([row({ status: 'queued', external_id: 'semaphore:123', sent_at: null })]);
+    getStatus.mockResolvedValue({ status: 'sent' });
+
+    const result = await smsDeliveryTrackerService.reconcileRecent();
+
+    expect(result).toMatchObject({ checked: 1, updated: 1, delivered: 0 });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'sent', sent_at: expect.any(Date), delivered_at: undefined }),
+    }));
+  });
+
+  it('does not fail old messages belonging to another device or provider', async () => {
+    findMany.mockResolvedValue([row({
+      external_id: 'other-provider:123', created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    })]);
+    const result = await smsDeliveryTrackerService.reconcileRecent();
+    expect(result.checked).toBe(0);
+    expect(getStatus).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 });

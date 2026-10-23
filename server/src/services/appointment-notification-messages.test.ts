@@ -7,6 +7,7 @@ import {
   APPOINTMENT_COMPLETED_MESSAGE,
   CUSTOMER_CANCEL_REASON,
   buildAppointmentCancelledMessage,
+  buildAppointmentCancelledSMS,
   buildAppointmentCompletedMessage,
   isCompletionAllowedFrom,
   shouldNotifyStatusChange,
@@ -56,6 +57,18 @@ describe('appointment-notification-messages', () => {
     expect(buildAppointmentCancelledMessage('Patient had emergency')).toBe(
       `${APPOINTMENT_CANCELLED_MESSAGE} Reason: Patient had emergency`
     );
+  });
+
+  it('includes the website cancellation note in the SMS', () => {
+    expect(buildAppointmentCancelledSMS('October 23, 2026', '14:00', '  Staff unavailable  ')).toBe(
+      'Hi this is Souvari Skin Lab, Your appointment for October 23, 2026 at 14:00 has been cancelled. Please contact us to rebook. Reason: Staff unavailable'
+    );
+  });
+
+  it('omits an empty or automatic placeholder reason from the SMS', () => {
+    const message = buildAppointmentCancelledSMS('October 23, 2026', '14:00');
+    expect(buildAppointmentCancelledSMS('October 23, 2026', '14:00', '  ')).toBe(message);
+    expect(buildAppointmentCancelledSMS('October 23, 2026', '14:00', CUSTOMER_CANCEL_REASON)).toBe(message);
   });
 
   it('completion appends review link only if valid', () => {

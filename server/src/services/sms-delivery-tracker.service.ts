@@ -7,7 +7,7 @@ const LOOKBACK_HOURS = 48;
 /** `sent` rows older than this with no carrier report are given up on. */
 const GIVE_UP_HOURS = 24;
 /** Cap per run so a large backlog cannot hammer the provider. */
-const MAX_ROWS_PER_RUN = 50;
+const MAX_ROWS_PER_RUN = 20; // Semaphore permits 30 status requests per minute.
 
 /**
  * Reconciles `sms_logs` with the SMS provider's real delivery state.
@@ -45,7 +45,9 @@ class SMSDeliveryTrackerService {
     for (const row of rows) {
       // TextBee stores `deviceId:batchId`; other providers use their own opaque id.
       // Either way getStatus decides whether it can interpret the value.
-      if (!row.external_id || !row.external_id.includes(':')) continue;
+      if (!row.external_id || (provider.canTrack
+        ? !provider.canTrack(row.external_id)
+        : !row.external_id.includes(':'))) continue;
 
       checked++;
       let status;
@@ -91,6 +93,7 @@ class SMSDeliveryTrackerService {
         where: { id: row.id },
         data: {
           status: nextStatus,
+          sent_at: nextStatus === 'sent' || nextStatus === 'delivered' ? row.sent_at ?? new Date() : undefined,
           delivered_at: deliveredAt ?? undefined,
           error_message: nextStatus === 'failed' ? status.error ?? row.error_message ?? 'Delivery failed' : row.error_message,
         },
