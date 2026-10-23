@@ -1,5 +1,21 @@
+export interface SMSDeliveryStatus {
+  /** Provider-normalized state for a single message. */
+  status: 'queued' | 'sent' | 'delivered' | 'failed';
+  /** When the provider recorded the carrier confirming delivery, if any. */
+  deliveredAt?: Date | null;
+  /** Human-readable failure reason when the provider reports one. */
+  error?: string | null;
+}
+
 export interface ISMSProvider {
   send(to: string, message: string): Promise<{ success: boolean; externalId?: string; error?: string }>;
+  /**
+   * Follow up on a previously accepted send, when the provider supports it.
+   *
+   * Optional: providers without a status API simply omit it and the poller
+   * skips their log rows. `externalId` is exactly what `send()` returned.
+   */
+  getStatus?(externalId: string): Promise<SMSDeliveryStatus | null>;
 }
 
 export interface SMSLogData {

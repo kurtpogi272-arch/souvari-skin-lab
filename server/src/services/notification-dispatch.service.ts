@@ -66,10 +66,13 @@ class NotificationDispatchService {
             user_id: userId,
             recipient_phone: recipient,
             message: smsText,
-            status: result.success ? 'sent' : 'failed',
+            // A successful send only means the provider accepted the message; it
+            // starts as "queued" and the delivery tracker promotes it to
+            // sent/delivered once the phone and carrier report back.
+            status: result.success ? 'queued' : 'failed',
             external_id: result.externalId ?? null,
             error_message: result.error ?? null,
-            sent_at: result.success ? new Date() : null,
+            sent_at: null,
           },
         });
 

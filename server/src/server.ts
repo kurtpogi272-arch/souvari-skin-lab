@@ -4,9 +4,11 @@ import prisma from './config/database';
 import logger from './utils/logger';
 import { membershipService } from './modules/memberships/memberships.service';
 import { appointmentService } from './modules/appointments/appointments.service';
+import { smsDeliveryTrackerService } from './services/sms-delivery-tracker.service';
 
 const OVERDUE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly
 const REMINDER_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly
+const SMS_TRACKER_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
 
 async function runOverdueCheck() {
   try {
@@ -16,6 +18,15 @@ async function runOverdueCheck() {
     }
   } catch (error: any) {
     logger.error(`[MEMBERSHIP] Overdue check failed: ${error.message}`);
+  }
+}
+
+// Follows up on recently accepted SMS to record whether they were delivered.
+async function runSmsDeliveryCheck() {
+  try {
+    await smsDeliveryTrackerService.reconcileRecent();
+  } catch (error: any) {
+    logger.error(`[SMS TRACKER] Reconcile failed: ${error.message}`);
   }
 }
 
@@ -46,6 +57,8 @@ async function main() {
       setInterval(() => { void runOverdueCheck(); }, OVERDUE_CHECK_INTERVAL_MS);
       void runReminderCheck();
       setInterval(() => { void runReminderCheck(); }, REMINDER_CHECK_INTERVAL_MS);
+      void runSmsDeliveryCheck();
+      setInterval(() => { void runSmsDeliveryCheck(); }, SMS_TRACKER_INTERVAL_MS);
     });
 
     // Keep process alive for the overdue scheduler even if the HTTP server errors.
