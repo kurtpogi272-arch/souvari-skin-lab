@@ -32,7 +32,10 @@ vi.mock('../../config/env', () => ({
   env: { AI_API_KEY: '', AI_MODEL: 'gpt-3.5-turbo', AI_BASE_URL: undefined },
 }));
 
-import { aiService } from './ai.service';
+import { AiService } from './ai.service';
+
+let aiService: AiService;
+beforeEach(() => { aiService = new AiService(); });
 
 const CATALOG = [
   { id: 1, name: '10 in 1 HydraFacial', description: 'Deep clean', price: 1500, duration_minutes: 60, category: 'facial' },

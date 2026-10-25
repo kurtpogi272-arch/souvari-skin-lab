@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authApi, setAccessToken } from '../api';
+import { getAccessToken } from '../api/axios';
 
 interface User {
   id: number;
@@ -36,6 +37,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const initAuth = async () => {
+      // Guests should not wait for a guaranteed 401 before the public page and
+      // chat button can render. Signed-in visitors still validate their session.
+      if (!getAccessToken()) {
+        setLoading(false);
+        return;
+      }
       try {
         const { data } = await authApi.getProfile();
         setUser(data.data);

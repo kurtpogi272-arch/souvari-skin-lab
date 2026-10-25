@@ -14,6 +14,7 @@ import {
   renderNoMatchReply,
   renderRelatedProductsReply,
   productsForService,
+  recommendProducts,
   type ProductRecord,
 } from './product-knowledge';
 
@@ -212,7 +213,7 @@ describe('detectIntents', () => {
     const intents = detectIntents('what is midnight balm used for and how much is it?');
     expect(intents).toContain('purpose');
     expect(intents).toContain('price');
-    expect(intents).toContain('overview');
+    expect(intents).not.toContain('overview');
   });
 
   it('answers all three parts of a three-part question', () => {
@@ -230,6 +231,12 @@ describe('detectIntents', () => {
 });
 
 describe('renderProductAnswer', () => {
+  it('keeps price-only answers focused rather than repeating the full product overview', () => {
+    const out = renderProductAnswer(GEL, detectIntents('How much is Zephyr Breeze Gel?'));
+    expect(out).toContain('Price: ₱500');
+    expect(out).not.toContain('Description:');
+    expect(out).not.toContain('Related services:');
+  });
   it('renders a bare-name overview with only stored facts', () => {
     const out = renderProductAnswer(GEL, ['overview']);
     expect(out).toContain('Zephyr Breeze Gel');
@@ -366,6 +373,27 @@ describe('renderProductAnswer', () => {
   it('formats a zero price as free rather than ₱0', () => {
     const free = p('Vellum Complimentary Sample', { id: 10, unit_price: 0 });
     expect(renderProductAnswer(free, ['price'])).toContain('Price: Free');
+  });
+});
+
+describe('product recommendations from recorded purposes', () => {
+  it('matches a concern to stored descriptions rather than guessing from a product name', () => {
+    const hydrating = p('Invented Moisture Product', { id: 50, purpose: 'Supports hydration for dry skin.' });
+    const other = p('Acne Miracle', { id: 51, purpose: 'Adds color to nails.' });
+    expect(recommendProducts([hydrating, other], 'Recommend products for dry skin')).toEqual([hydrating]);
+    expect(recommendProducts([hydrating, other], 'Recommend products for acne')).toEqual([]);
+  });
+
+  it('does not recommend unavailable products or a purpose that explicitly excludes the concern', () => {
+    const unavailable = p('Moisture Product', { purpose: 'Hydration for dry skin.', current_stock: 0 });
+    const excluded = p('Other Product', { purpose: 'Not intended for acne.' });
+    expect(recommendProducts([unavailable], 'Products for dry skin')).toEqual([]);
+    expect(recommendProducts([excluded], 'Products for acne')).toEqual([]);
+  });
+
+  it('caps recommendations at three matching products', () => {
+    const products = Array.from({ length: 8 }, (_, i) => p(`Moisture ${i}`, { id: i, purpose: 'Helps with dry skin hydration.' }));
+    expect(recommendProducts(products, 'Products for dry skin')).toHaveLength(3);
   });
 });
 
@@ -514,15 +542,15 @@ describe('catalog browsing', () => {
     expect(isCatalogBrowseQuery(normalizeQuery('what services do you offer'))).toBe(false);
   });
 
-  it('lists every product with its price', () => {
-    const out = renderCatalogReply(CATALOG);
+  it('lists every product with its price when the customer explicitly asks for all', () => {
+    const out = renderCatalogReply(CATALOG, true);
     expect(out).toContain(`We currently carry these ${CATALOG.length} products`);
     for (const prod of CATALOG) expect(out).toContain(prod.name);
   });
 
   it('caps how many products it lists', () => {
     const many = Array.from({ length: 30 }, (_, i) => p(`Kite Tonic ${i}`, { id: i + 1 }));
-    expect(renderCatalogReply(many)).toContain('and 15 more');
+    expect(renderCatalogReply(many)).toContain('and 27 more');
   });
 
   it('falls back to the no-match reply when the catalog is empty', () => {
@@ -583,7 +611,7 @@ describe('ambiguous and no-match replies', () => {
   it('caps how many options it lists', () => {
     const many = Array.from({ length: 8 }, (_, i) => p(`Kite Zephyr Tonic ${i}`, { id: i + 1 }));
     const out = renderAmbiguousReply(many);
-    expect(out).toContain('and 3 more');
+    expect(out).toContain('and 5 more');
   });
 
   it('does not describe a product it does not have', () => {

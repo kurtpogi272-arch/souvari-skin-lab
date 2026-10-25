@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2, X, MessageSquare } from 'lucide-react';
 import { chatApi } from '../../api';
+import ChatMessageText from './ChatMessageText';
 
 interface Message {
   id: string;
@@ -21,6 +22,7 @@ const QUICK_REPLIES = [
   'How much is a facial?',
   'What products do you have?',
   'What are your clinic hours?',
+  'How can I locate your store?',
 ];
 
 export default function ChatbotWindow({ onClose, className = '' }: ChatbotWindowProps) {
@@ -34,7 +36,7 @@ export default function ChatbotWindow({ onClose, className = '' }: ChatbotWindow
   ]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [sessionToken] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  const [sessionToken, setSessionToken] = useState<string>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -71,7 +73,7 @@ export default function ChatbotWindow({ onClose, className = '' }: ChatbotWindow
       });
 
       if (data.data?.session_token) {
-        // session token updated
+        setSessionToken(data.data.session_token);
       }
 
       const botMsg: Message = {
@@ -138,7 +140,7 @@ export default function ChatbotWindow({ onClose, className = '' }: ChatbotWindow
                     : 'bg-neutral-100 text-neutral-900 rounded-md rounded-bl-md'
                 }`}
               >
-                <p className="whitespace-pre-wrap">{msg.content}</p>
+                <ChatMessageText text={msg.content} />
               </div>
             </div>
           </div>

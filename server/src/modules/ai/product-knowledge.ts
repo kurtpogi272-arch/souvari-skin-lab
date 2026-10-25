@@ -1,5 +1,6 @@
 import prisma from '../../config/database';
 import { roundPeso } from '../../services/pricing-engine.core';
+import { conciseText } from './service-knowledge';
 
 /**
  * Database-driven product knowledge for the clinic assistant.
@@ -331,10 +332,10 @@ export function isCatalogBrowseQuery(normalized: NormalizedQuery): boolean {
  * Render the whole catalog. Used only when nothing specific matched, so the user
  * gets a real answer instead of a misleading "we do not have that".
  */
-export function renderCatalogReply(products: ProductRecord[]): string {
+export function renderCatalogReply(products: ProductRecord[], showAll = false): string {
   if (products.length === 0) return renderNoMatchReply();
 
-  const MAX_LISTED = 15;
+  const MAX_LISTED = showAll ? products.length : 3;
   const shown = products.slice(0, MAX_LISTED);
   const list = shown.map((p) => `- ${p.name} (${peso(p.unit_price)})`).join('\n');
   const rest = products.length - shown.length;
@@ -342,7 +343,7 @@ export function renderCatalogReply(products: ProductRecord[]): string {
   return (
     `We currently carry these ${products.length} products:\n${list}` +
     (rest > 0 ? `\n- and ${rest} more` : '') +
-    `\n\nAsk me about any one of them for details.\n\n${DISCLAIMER}`
+    `\n\nAsk about an item, a concern, or ask for all products.\n\n${DISCLAIMER}`
   );
 }
 
@@ -482,12 +483,6 @@ export function detectIntents(query: NormalizedQuery | string): ProductIntent[] 
   // A bare name, or a question with no specific cue, means give the overview.
   if (found.length === 0) add('overview');
 
-  // Overview is implied whenever a narrower field was asked for, because the
-  // customer should still be able to see what the product is.
-  if (found.length > 0 && !found.includes('overview')) {
-    found.unshift('overview');
-  }
-
   return found;
 }
 
@@ -515,7 +510,7 @@ function descriptiveFields(product: ProductRecord): Array<{ label: string; value
 }
 
 const MISSING_FIELD_NOTE =
-  'We do not have those details on file yet — please ask our clinic staff and they can advise you in person.';
+  'We do not have those details on file yet; please ask our clinic staff.';
 
 const DISCLAIMER =
   'Please consult with our clinic professionals for personalized advice.';
@@ -547,11 +542,18 @@ export function renderProductAnswer(product: ProductRecord, intents: ProductInte
 
   if (wantsOverview) {
     if (descriptive.length > 0) {
-      lines.push(...descriptive.map((f) => `${f.label}: ${f.value}`));
+      lines.push(...descriptive.map((f) => `${f.label}: ${conciseText(f.value, 120)}`));
     } else {
       lines.push(
         'We currently list this product by name and price only — fuller details are not on file yet.',
       );
+    }
+  }
+
+  if (!wantsOverview) {
+    for (const [intent, label] of [['purpose', 'Purpose'], ['benefits', 'Benefits']] as const) {
+      const field = descriptive.find((f) => f.label === label);
+      if (requested.includes(intent) && field) lines.push(`${label}: ${conciseText(field.value, 220)}`);
     }
   }
 
@@ -585,7 +587,7 @@ export function renderProductAnswer(product: ProductRecord, intents: ProductInte
   if (requested.includes('related_services')) {
     lines.push(
       product.related_services.length > 0
-        ? `Related services: ${product.related_services.join(', ')}`
+        ? `Related services: ${product.related_services.slice(0, 3).join(', ')}`
         : `Related services: ${MISSING_FIELD_NOTE}`,
     );
     emitted.add('related_services');
@@ -601,7 +603,7 @@ export function renderProductAnswer(product: ProductRecord, intents: ProductInte
       lines.push(`Availability: ${availabilityLine(product)}`);
     }
     if (!emitted.has('related_services') && product.related_services.length > 0) {
-      lines.push(`Related services: ${product.related_services.join(', ')}`);
+      lines.push(`Related services: ${product.related_services.slice(0, 3).join(', ')}`);
     }
   }
 
@@ -612,7 +614,7 @@ export function renderProductAnswer(product: ProductRecord, intents: ProductInte
 /**
  * Reply when a query matches several products. Never picks one arbitrarily.
  */
-export function renderAmbiguousReply(products: ProductRecord[], limit = 5): string {
+export function renderAmbiguousReply(products: ProductRecord[], limit = 3): string {
   const shown = products.slice(0, limit);
   const list = shown.map((p) => `- ${p.name} (${peso(p.unit_price)})`).join('\n');
   const more = products.length > shown.length
@@ -656,11 +658,41 @@ export function renderRelatedProductsReply(serviceName: string, products: Produc
     );
   }
 
-  const list = products.map((p) => `- ${p.name} (${peso(p.unit_price)})`).join('\n');
+  const list = products.slice(0, 3).map((p) => `- ${p.name} (${peso(p.unit_price)})`).join('\n');
   return (
     `Products we use with ${serviceName}:\n${list}\n\n` +
     `Ask me about any of these for details.\n\n${DISCLAIMER}`
   );
+}
+
+/** Recommendations use the recorded purpose/benefits, not invented ingredient claims. */
+export function recommendProducts(products: ProductRecord[], message: string): ProductRecord[] {
+  const concerns = [
+    ['acne', 'pimple', 'breakout', 'blemish'], ['oily', 'oil control', 'excess oil', 'sebum'],
+    ['dry', 'dryness', 'dehydrated', 'hydration', 'moisture'], ['dull', 'dullness', 'brightening'],
+    ['dark spot', 'pigmentation', 'uneven tone'], ['fine line', 'wrinkle', 'aging'],
+    ['sun protection', 'sunscreen', 'uv', 'spf'], ['sensitive', 'soothing', 'barrier'],
+    ['nail', 'polish', 'manicure', 'pedicure'],
+  ];
+  const text = message.toLowerCase();
+  const hasTerm = (value: string, term: string) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:s|ness)?\\b`, 'i').test(value);
+  const requested = concerns.filter((group) => group.some((term) => hasTerm(text, term)));
+  if (!requested.length) return [];
+  return products.filter((p) => p.current_stock > 0).map((product) => {
+    const information = `${product.purpose ?? ''} ${product.benefits ?? ''} ${product.description ?? ''}`.toLowerCase();
+    const score = requested.reduce((total, group) => {
+      const matching = group.filter((term) => hasTerm(information, term));
+      const excluded = matching.some((term) => new RegExp(`\\b(not|avoid|unsuitable)[^.]{0,45}\\b${term}\\b`, 'i').test(information));
+      return total + (matching.length && !excluded ? 1 : 0);
+    }, 0);
+    return { product, score };
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
+    .slice(0, 3).map((item) => item.product);
+}
+
+export function renderProductRecommendations(products: ProductRecord[]): string {
+  if (!products.length) return 'I do not have a product with a recorded purpose matching that concern. Our clinic staff can help you choose.';
+  return `Options from our product catalog:\n${products.map((p) => `- ${p.name} (${peso(p.unit_price)}): ${conciseText(p.purpose || p.benefits || p.description || '', 105)}`).join('\n')}\n\n${DISCLAIMER}`;
 }
 
 /**

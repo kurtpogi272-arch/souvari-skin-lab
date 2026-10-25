@@ -1,54 +1,55 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { useAuth } from './context/AuthContext';
 import PublicLayout from './components/layout/PublicLayout';
 import DashboardLayout from './components/layout/DashboardLayout';
 import LoadingSpinner from './components/shared/LoadingSpinner';
 import ScrollToTop from './components/ScrollToTop';
 
-import Home from './pages/public/Home';
-import About from './pages/public/About';
-import PublicServices from './pages/public/PublicServices';
-import ServiceDetail from './pages/public/ServiceDetail';
-import Contact from './pages/public/Contact';
-import BookingPage from './pages/public/BookingPage';
-import BookingConfirmation from './pages/public/BookingConfirmation';
-import MembershipPlans from './pages/public/MembershipPlans';
-import Login from './pages/auth/Login';
-import ForgotPassword from './pages/auth/ForgotPassword';
-import Register from './pages/auth/Register';
+const Home = lazy(() => import('./pages/public/Home'));
+const About = lazy(() => import('./pages/public/About'));
+const PublicServices = lazy(() => import('./pages/public/PublicServices'));
+const ServiceDetail = lazy(() => import('./pages/public/ServiceDetail'));
+const Contact = lazy(() => import('./pages/public/Contact'));
+const BookingPage = lazy(() => import('./pages/public/BookingPage'));
+const BookingConfirmation = lazy(() => import('./pages/public/BookingConfirmation'));
+const MembershipPlans = lazy(() => import('./pages/public/MembershipPlans'));
+const Login = lazy(() => import('./pages/auth/Login'));
+const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'));
+const Register = lazy(() => import('./pages/auth/Register'));
 
-import CustomerDashboard from './pages/customer/Dashboard';
-import CustomerAppointments from './pages/customer/Appointments';
-import CustomerTransactions from './pages/customer/Transactions';
-import CustomerNotifications from './pages/customer/Notifications';
-import CustomerProfile from './pages/customer/Profile';
-import CustomerChatbot from './pages/customer/Chatbot';
-import CustomerMembership from './pages/customer/Membership';
+const CustomerDashboard = lazy(() => import('./pages/customer/Dashboard'));
+const CustomerAppointments = lazy(() => import('./pages/customer/Appointments'));
+const CustomerTransactions = lazy(() => import('./pages/customer/Transactions'));
+const CustomerNotifications = lazy(() => import('./pages/customer/Notifications'));
+const CustomerProfile = lazy(() => import('./pages/customer/Profile'));
+const CustomerChatbot = lazy(() => import('./pages/customer/Chatbot'));
+const CustomerMembership = lazy(() => import('./pages/customer/Membership'));
 
-import StaffDashboard from './pages/staff/Dashboard';
-import StaffAppointments from './pages/staff/Appointments';
-import StaffSchedule from './pages/staff/Schedule';
-import StaffNotifications from './pages/staff/Notifications';
-import StaffProducts from './pages/staff/Products';
+const StaffDashboard = lazy(() => import('./pages/staff/Dashboard'));
+const StaffAppointments = lazy(() => import('./pages/staff/Appointments'));
+const StaffSchedule = lazy(() => import('./pages/staff/Schedule'));
+const StaffNotifications = lazy(() => import('./pages/staff/Notifications'));
+const StaffProducts = lazy(() => import('./pages/staff/Products'));
 
-import AdminDashboard from './pages/admin/Dashboard';
-import AdminCustomers from './pages/admin/Customers';
-import AdminStaff from './pages/admin/Staff';
-import AdminShifts from './pages/admin/Shifts';
-import AdminServices from './pages/admin/Services';
-import AdminNewService from './pages/admin/NewService';
-import AdminProducts from './pages/admin/Products';
-import AdminInventory from './pages/admin/Inventory';
-import AdminAppointments from './pages/admin/Appointments';
-import AdminCalendar from './pages/admin/Calendar';
-import AdminTransactions from './pages/admin/Transactions';
-import AdminAnalytics from './pages/admin/Analytics';
-import AdminSettings from './pages/admin/Settings';
-import AdminMembershipPlans from './pages/admin/MembershipPlans';
-import AdminMemberships from './pages/admin/Memberships';
-import AdminPackages from './pages/admin/Packages';
-import AdminNotifications from './pages/admin/Notifications';
-import AdminReviews from './pages/admin/Reviews';
+const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'));
+const AdminCustomers = lazy(() => import('./pages/admin/Customers'));
+const AdminStaff = lazy(() => import('./pages/admin/Staff'));
+const AdminShifts = lazy(() => import('./pages/admin/Shifts'));
+const AdminServices = lazy(() => import('./pages/admin/Services'));
+const AdminNewService = lazy(() => import('./pages/admin/NewService'));
+const AdminProducts = lazy(() => import('./pages/admin/Products'));
+const AdminInventory = lazy(() => import('./pages/admin/Inventory'));
+const AdminAppointments = lazy(() => import('./pages/admin/Appointments'));
+const AdminCalendar = lazy(() => import('./pages/admin/Calendar'));
+const AdminTransactions = lazy(() => import('./pages/admin/Transactions'));
+const AdminAnalytics = lazy(() => import('./pages/admin/Analytics'));
+const AdminSettings = lazy(() => import('./pages/admin/Settings'));
+const AdminMembershipPlans = lazy(() => import('./pages/admin/MembershipPlans'));
+const AdminMemberships = lazy(() => import('./pages/admin/Memberships'));
+const AdminPackages = lazy(() => import('./pages/admin/Packages'));
+const AdminNotifications = lazy(() => import('./pages/admin/Notifications'));
+const AdminReviews = lazy(() => import('./pages/admin/Reviews'));
 
 import NotFound from './pages/errors/NotFound';
 
@@ -67,6 +68,7 @@ export default function App() {
   return (
     <>
       <ScrollToTop />
+      <Suspense fallback={<LoadingSpinner fullScreen />}>
       <Routes>
       {/* Public */}
       <Route element={<PublicLayout />}>
@@ -131,6 +133,7 @@ export default function App() {
 
       <Route path="*" element={<NotFound />} />
       </Routes>
+      </Suspense>
     </>
   );
 }

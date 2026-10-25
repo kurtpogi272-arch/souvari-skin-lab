@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { chatApi } from '@/api';
+import ChatMessageText from '@/components/chatbot/ChatMessageText';
 
 interface Message {
   id: string;
@@ -21,7 +22,7 @@ export default function Chatbot() {
   ]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [sessionToken, setSessionToken] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  const [sessionToken, setSessionToken] = useState<string>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -111,7 +112,7 @@ export default function Chatbot() {
                     ? 'bg-neutral-900 text-white rounded-br-md'
                     : 'bg-neutral-100 text-neutral-900 rounded-bl-md'
                 }`}>
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  <ChatMessageText text={msg.content} />
                 </div>
               </div>
             </div>
