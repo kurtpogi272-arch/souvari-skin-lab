@@ -289,6 +289,9 @@ export function looksLikeProductLookup(normalized: NormalizedQuery): boolean {
  * than not answering at all because it looks authoritative.
  */
 export function isReferentialProductFollowUp(normalized: NormalizedQuery): boolean {
+  // A relative clause ("a service that can brighten my skin") is a new request,
+  // not a reference to whichever product was discussed previously.
+  if (/\b(recommend|suggest|looking for|i have|i want|i need)\b/.test(normalized.lower)) return false;
   const hasPronoun = /\b(it|that|this|these|those|them|they)\b/.test(normalized.lower);
   if (hasPronoun) return true;
 
@@ -369,6 +372,8 @@ function scoreProduct(product: ProductRecord, q: NormalizedQuery): number {
   let firstTokenExact = false;
 
   for (const qt of q.tokens) {
+    // A topic/body-area word alone does not identify a retail product.
+    if (['skin', 'face', 'body', 'care', 'treatment', 'aftercare', 'product', 'products', 'service', 'services'].includes(qt)) continue;
     for (let i = 0; i < nameTokens.length; i += 1) {
       const nt = nameTokens[i];
       if (qt === nt) {
@@ -669,8 +674,8 @@ export function renderRelatedProductsReply(serviceName: string, products: Produc
 export function recommendProducts(products: ProductRecord[], message: string): ProductRecord[] {
   const concerns = [
     ['acne', 'pimple', 'breakout', 'blemish'], ['oily', 'oil control', 'excess oil', 'sebum'],
-    ['dry', 'dryness', 'dehydrated', 'hydration', 'moisture'], ['dull', 'dullness', 'brightening'],
-    ['dark spot', 'pigmentation', 'uneven tone'], ['fine line', 'wrinkle', 'aging'],
+    ['dry', 'dryness', 'dehydrated', 'hydration', 'moisture'], ['dull', 'dullness', 'brighten', 'brightening', 'brighter'],
+    ['dark spot', 'pigmentation', 'hyperpigmentation', 'uneven tone', 'uneven skin tone'], ['fine line', 'wrinkle', 'aging'],
     ['sun protection', 'sunscreen', 'uv', 'spf'], ['sensitive', 'soothing', 'barrier'],
     ['nail', 'polish', 'manicure', 'pedicure'],
   ];

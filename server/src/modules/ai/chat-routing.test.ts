@@ -47,6 +47,96 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+describe('reported brightening conversation regression', () => {
+  beforeEach(() => {
+    db.services.findMany.mockResolvedValue([
+      ...services,
+      { id: 4, name: 'Diamond Glow Classic', description: 'Cosmetic facial exfoliation for dull-looking skin.', price: 499, duration_minutes: 60, category: 'facial' },
+      { id: 5, name: 'Underarms - Carbon Laser Whitening', description: null, price: 799, duration_minutes: 30, category: 'body', group: { slug: 'body-whitening', name: 'BODY WHITENING' } },
+      { id: 6, name: 'Face', description: null, price: 900, duration_minutes: 45, category: 'body', group: { slug: 'radio-frequency', name: 'RADIO FREQUENCY' } },
+      { id: 7, name: 'Full Lips Pigmentation', description: null, price: 9299, duration_minutes: 60, category: 'other', group: { slug: 'permanent-makeup', name: 'PERMANENT MAKE UP' } },
+      { id: 8, name: 'Flanks', description: null, price: 7990, duration_minutes: 45, category: 'skin_rejuvenation', group: { slug: 'ultratight-hifu', name: 'UltraTight HIFU' } },
+    ]);
+    db.products.findMany.mockResolvedValue([
+      { id: 10, name: 'Post Healing Cream (Aftercare for Warts/Skin Tag Removal)', description: 'Post-procedure aftercare cream.', purpose: 'For moisturising small treated areas after a removal procedure.', benefits: 'Supports comfort after the procedure.', sku: 'HEAL', unit: 'bottle', unit_price: 150, current_stock: 10, category: null, service_inventory_items: [] },
+      { id: 11, name: 'Vitamin C Serum', description: 'A cosmetic serum.', purpose: 'Supports brightening for dull, uneven tone.', benefits: 'Supports a brighter-looking complexion.', sku: 'VITC', unit: 'bottle', unit_price: 500, current_stock: 10, category: null, service_inventory_items: [] },
+    ]);
+  });
+
+  const send = (message: string) => ai.processMessage({ message, session_token: 'server-session' });
+
+  it('handles the exact sequence without returning the cream or repeating a generic clarification', async () => {
+    expect((await send('where can I locate your store?')).response).toContain('District Mall');
+    const ambiguous = (await send('I have dark skin')).response;
+    expect(ambiguous).toContain('natural skin tone, dark spots, or uneven tone');
+    expect(ambiguous).not.toContain('Post Healing Cream');
+
+    const goal = (await send('I want to brighten my skin')).response;
+    expect(goal).toContain('Is this for your face or body?');
+    expect(goal).not.toContain('main skin concern');
+
+    for (const message of ['brighten my skin', 'Can you recommend service that can brighten my skin?']) {
+      const result = (await send(message)).response;
+      expect(result).toContain('10 in 1 HydraFacial');
+      expect(result).not.toContain('Post Healing Cream');
+      expect(result).not.toContain('Full Lips Pigmentation');
+      expect(result).not.toContain('Flanks');
+      expect(result).not.toContain('main skin concern');
+      expect(result).not.toContain('Is this for your face or body?');
+      expect(result.split('\n').filter((line) => line.startsWith('- ')).length).toBeLessThanOrEqual(3);
+    }
+    const area = (await send('face')).response;
+    expect(area).toContain('10 in 1 HydraFacial');
+    expect(area).not.toContain('Underarms');
+    expect(area).not.toContain('RADIO FREQUENCY');
+    expect(area).not.toContain('main skin concern');
+    expect(modelCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not let an earlier product topic capture a new service request containing "that"', async () => {
+    expect((await send('Tell me about Post Healing Cream (Aftercare for Warts/Skin Tag Removal)')).response).toContain('Post Healing Cream');
+    const request = (await send('Can you recommend service that can brighten my skin?')).response;
+    expect(request).toContain('Is this for your face or body?');
+    expect(request).not.toContain('Post Healing Cream');
+    const response = (await send('face')).response;
+    expect(response).toContain('10 in 1 HydraFacial');
+    expect(response).not.toContain('Post Healing Cream');
+  });
+
+  it('keeps the goal when the customer answers only with a body area', async () => {
+    await send('I want to brighten my skin');
+    const result = (await send('underarms')).response;
+    expect(result).toContain('Underarms - Carbon Laser Whitening');
+    expect(result).not.toContain('main skin concern');
+    expect(result).not.toContain('10 in 1 HydraFacial');
+  });
+
+  it('handles a greeting plus a specific concern without replying only with a greeting', async () => {
+    const result = (await send('Hi, I want to brighten my skin')).response;
+    expect(result).toContain('brightening options');
+    expect(result).not.toContain('Hello! Welcome');
+  });
+
+  it.each(['I have oily skin', 'I want help with acne', 'recommend a service for dryness'])(
+    'answers the stated concern before generic skin prompts: "%s"', async (message) => {
+      const result = (await send(message)).response;
+      expect(result).not.toContain('Post Healing Cream');
+      expect(result).not.toContain('main skin concern');
+      expect(result).toContain('₱');
+    },
+  );
+
+  it.each(['Recommend products for brightening and uneven tone', 'Recommend a product to brighten my skin', 'Suggest products for uneven skin tone'])(
+    'still answers explicit product recommendations and real follow-ups: "%s"', async (message) => {
+    const products = (await send(message)).response;
+    expect(products).toContain('Vitamin C Serum');
+    expect(products).not.toContain('Post Healing Cream');
+    const followUp = (await send('How much is it?')).response;
+    expect(followUp).toContain('Vitamin C Serum');
+    expect(followUp).toContain('₱500');
+  });
+});
+
 describe('fast deterministic replies when AI is configured', () => {
   it.each([
     'How can I locate your store?', 'Hi, how can I find your clinic?', 'How do I get there?',
@@ -141,7 +231,7 @@ describe('fast deterministic replies when AI is configured', () => {
   it('does not retry an unanswered model request and immediately uses the existing fallback on error', async () => {
     db.services.findMany.mockResolvedValue([]);
     modelCreate.mockRejectedValue(Object.assign(new Error('Provider unavailable'), { status: 429 }));
-    const result = await ai.processMessage({ message: 'Can you explain collagen terminology?' });
+    const result = await ai.processMessage({ message: 'Can you explain dermaplaning terminology?' });
     expect(modelConstructor).toHaveBeenCalledWith(expect.objectContaining({ timeout: 8000, maxRetries: 0 }));
     expect(modelCreate).toHaveBeenCalledTimes(1);
     expect(result.response).toBe(UNRECOGNIZED_REPLY);

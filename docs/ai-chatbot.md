@@ -100,6 +100,35 @@ clarification; group metadata distinguishes RF, HIFU, diode and wax.
 
 ## Service research and catalog coverage
 
+### Concern routing and clarification memory
+
+Personal concerns and service recommendations run before fuzzy product lookup
+and the generic skincare overview. Sharing the word `skin`, `face`, `body`,
+`care`, `treatment`, or `aftercare` with an item name is not sufficient to select
+that item. Exact product names and meaningful product-name fragments remain
+searchable, and explicit product recommendations use recorded purposes.
+
+- `I have dark skin` asks whether the customer means natural skin tone, dark
+  spots, or uneven tone; it does not assume that natural skin tone is a problem.
+- `I want to brighten my skin` records brightening as the goal and asks only for
+  face/body context, at most once for that goal in the current chat session.
+- A repeated goal or an explicit service request gets focused catalog options
+  rather than another generic questionnaire. A bare area reply such as `face`
+  or `underarms` continues the goal instead of selecting a same-name service.
+- Facial brightening options must have a relevant recorded or referenced focus,
+  not merely a broad skin-rejuvenation category. Do not fill a three-item limit
+  with unrelated PMU, body contouring, or post-procedure products.
+- Body-brightening listings are identified as catalog options to discuss with
+  staff; their exact protocol and expected benefits still require confirmation.
+- `Recommend a service that ...` is a new request, not a pronoun follow-up about
+  a previous product. A new concern clears the earlier product topic.
+
+The regression suite includes the complete reported location → dark skin →
+brightening → repeated goal → explicit service request conversation, area-only
+answers, and new-topic switches after a real product lookup. The catalog-name
+audit below checks recognition, not conversational relevance; both checks are
+needed when changing chatbot routing.
+
 The `service-knowledge.ts` reference notes describe treatment families in original,
 concise wording. They do **not** assert that the clinic uses a particular branded
 device, formulation, protocol, or promises a treatment result. An existing clinic

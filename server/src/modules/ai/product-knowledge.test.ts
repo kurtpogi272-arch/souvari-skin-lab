@@ -108,6 +108,12 @@ describe('mentionsProduct', () => {
 });
 
 describe('matchProducts', () => {
+  it.each(['skin', 'I have dark skin', 'I want to brighten my skin', 'Can you recommend service that can brighten my skin?'])(
+    'does not use a shared topic word to select a post-procedure product for "%s"', (message) => {
+      const aftercare = p('Post Healing Cream (Aftercare for Warts/Skin Tag Removal)', { id: 90 });
+      expect(matchProducts([aftercare], message).kind).toBe('none');
+    },
+  );
   it('matches a full product name exactly', () => {
     const m = matchProducts(CATALOG, 'Zephyr Breeze Gel');
     expect(m.kind).toBe('single');
@@ -178,6 +184,23 @@ describe('matchProducts', () => {
   it('returns none for an empty message', () => {
     expect(matchProducts(CATALOG, '   ').kind).toBe('none');
   });
+});
+
+describe('new requests versus product follow-ups', () => {
+  it.each([
+    'Can you recommend service that can brighten my skin?',
+    'Suggest a treatment that can help with acne',
+    'I have dark skin',
+    'I want something for my dry skin',
+  ])('does not attach a fresh request to an earlier product: "%s"', (message) => {
+    expect(isReferentialProductFollowUp(normalizeQuery(message))).toBe(false);
+  });
+
+  it.each(['How much is it?', 'What is that used for?', 'What are its benefits?'])(
+    'keeps a genuine product follow-up working: "%s"', (message) => {
+      expect(isReferentialProductFollowUp(normalizeQuery(message))).toBe(true);
+    },
+  );
 });
 
 describe('detectIntents', () => {

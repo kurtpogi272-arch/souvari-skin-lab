@@ -66,7 +66,10 @@ export class AiService {
   /** In-memory per-session context so follow-ups like "how much for that?" work without an LLM. */
   private sessionContext = new Map<
     number,
-    { lastServices: string[]; lastConcern: string | null; lastProducts: ProductRecord[]; lastServiceIds?: number[] }
+    {
+      lastServices: string[]; lastConcern: string | null; lastProducts: ProductRecord[]; lastServiceIds?: number[];
+      recommendation?: { goal: string; query: string; area: 'face' | 'body' | null; areaAsked: boolean };
+    }
   >();
 
   /** Strong standalone signals — a single match means the message is clinic-related. */
@@ -1691,7 +1694,8 @@ You should be friendly, professional, and helpful while staying within these bou
     lastProducts: ProductRecord[] = [],
   ): void {
     if (!sessionId) return;
-    this.sessionContext.set(sessionId, { lastServices, lastConcern, lastProducts });
+    const previous = this.sessionContext.get(sessionId);
+    this.sessionContext.set(sessionId, { ...previous, lastServiceIds: undefined, lastServices, lastConcern, lastProducts });
     if (this.sessionContext.size > 300) {
       const oldest = this.sessionContext.keys().next().value;
       if (oldest !== undefined) this.sessionContext.delete(oldest);
@@ -1703,14 +1707,114 @@ You should be friendly, professional, and helpful while staying within these bou
     if (!sessionId || products.length === 0) return;
     const existing = this.sessionContext.get(sessionId);
     this.rememberContext(sessionId, existing?.lastServices ?? [], existing?.lastConcern ?? null, products);
+    const context = this.sessionContext.get(sessionId);
+    if (context) context.recommendation = undefined;
   }
 
   private rememberServices(sessionId: number | undefined, services: ChatService[], concern: string | null = null): void {
     this.rememberContext(sessionId, services.map((s) => s.name), concern);
     if (sessionId) {
       const context = this.sessionContext.get(sessionId);
-      if (context) context.lastServiceIds = services.map((s) => s.id);
+      if (context) {
+        context.lastServiceIds = services.map((s) => s.id);
+        if (concern === null) context.recommendation = undefined;
+      }
     }
+  }
+
+  private isRecommendationAreaReply(message: string): boolean {
+    return /^(?:(?:for|my|the)\s+)*(face|facial|body|underarms?|armpits?|arms?|legs?|back|bikini)(?:\s+(?:please|area))?[?.!\s]*$/.test(message.trim().toLowerCase());
+  }
+
+  /** Personal concerns are not catalog-name searches. Clarify only missing context. */
+  private concernResponse(message: string, sessionId: number | undefined, services: ChatService[]): string | null {
+    const lower = message.toLowerCase();
+    if (/\b(products?|items?|cream|serum|balm|sunscreen|toner|moisturi[sz]er|gel|mask|lotion|roller)\b/.test(lower)) return null;
+    const tokens = this.tokenize(lower);
+    const hasConcern = this.hasConcernSignal(lower, tokens);
+    const brightening = /\b(brighten(ing)?|lighten(ing)?|whiten(ing)?|brighter|lighter|uneven tone|dark spots?|dark (?:underarms?|armpits?|knees?|elbows?|neck))\b/.test(lower);
+    const darkSkin = /\b(?:i have|my|having)\s+(?:a\s+)?(?:dark|darker|brown|tan)\s+skin\b|\bmy skin is (?:dark|darker|brown|tan)\b|^\s*(?:dark|darker|brown|tan)\s+skin[?.!\s]*$/.test(lower);
+    if (darkSkin && !brightening && !hasConcern) {
+      if (sessionId) this.rememberContext(sessionId, [], null);
+      const context = sessionId ? this.sessionContext.get(sessionId) : undefined;
+      if (context) context.recommendation = undefined;
+      return 'Are you asking about your natural skin tone, dark spots, or uneven tone? What would you like help with?';
+    }
+
+    const previous = sessionId ? this.sessionContext.get(sessionId)?.recommendation : undefined;
+    const areaOnly = this.isRecommendationAreaReply(lower);
+    const asksForServices = /\b(recommend|suggest)\b[^?]*\b(services?|treatments?)\b/.test(lower);
+    if (areaOnly && !previous) return 'What would you like help with in that area—for example unwanted hair, uneven tone, or skin texture?';
+    if (!hasConcern && !brightening && !(previous && (areaOnly || asksForServices))) return null;
+
+    const groups = AiService.SKIN_CONCERNS.filter((g) => this.concernHits(lower, tokens, g).length > 0);
+    const answeringArea = !!previous && areaOnly;
+    const goal = answeringArea ? previous.goal : brightening ? 'brightening' : hasConcern ? groups.map((g) => g.label).join(', ') : previous!.goal;
+    const sameGoal = previous?.goal === goal;
+    const area = /\b(underarms?|armpits?|arms?|legs?|back|bikini|body)\b/.test(lower) ? 'body'
+      : /\b(face|facial)\b/.test(lower) ? 'face' : sameGoal ? previous?.area ?? null : null;
+    const state = {
+      goal,
+      query: answeringArea ? previous.query : brightening ? 'brightening dullness uneven tone' : hasConcern ? groups.map((g) => g.label).join(' ') : previous!.query,
+      area,
+      areaAsked: sameGoal ? previous?.areaAsked ?? false : false,
+    };
+    // A new concern explicitly ends the product topic, including a previously
+    // incorrect match in an ongoing conversation.
+    this.rememberContext(sessionId, [], goal);
+    const context = sessionId ? this.sessionContext.get(sessionId) : undefined;
+    if (context) context.recommendation = state;
+
+    if (goal === 'brightening' && !area && !state.areaAsked) {
+      state.areaAsked = true;
+      return 'Understood—you are looking for brightening options. Is this for your face or body?';
+    }
+
+    let candidates = services;
+    if (goal === 'brightening' && area !== 'body') {
+      // Pigment in a PMU service name is not evidence for skin brightening.
+      // Do not pad facial recommendations with lip tattoos or other body areas.
+      candidates = services.filter((s) => {
+        const facial = ['facial', 'signature_facial', 'skin_rejuvenation'].includes(s.category) || s.group?.slug === 'signature-facials';
+        const supportedFocus = serviceKnowledge(s).concerns.some((term) => /dull|hydrat|uneven tone|brighten|skin texture/.test(term)) ||
+          /\b(brighten(?:ing)?|dull(?:ness)?|uneven (?:skin )?tone|pigmentation)\b/i.test(s.description ?? '');
+        return facial && supportedFocus;
+      });
+    } else if (area === 'face') {
+      candidates = services.filter((s) => ['facial', 'signature_facial', 'skin_rejuvenation', 'consultation'].includes(s.category) || /\bface\b/i.test(s.name));
+    } else if (area === 'body') {
+      candidates = services.filter((s) => s.category === 'body' || /body|whitening|radio-frequency|rf-7|ultratight/.test(s.group?.slug ?? ''));
+    }
+    if (goal === 'brightening' && area === 'body') {
+      let listings = candidates.filter((s) => ['body-whitening', 'body-whitening-7'].includes(s.group?.slug ?? ''));
+      const part = /\b(underarms?|armpits?|knees?|elbows?|bikini|buttocks?|neck|nape)\b/.exec(lower)?.[1];
+      if (part) {
+        const areaWord = /^armpit|^underarm/.test(part) ? 'underarm' : part.replace(/s$/, '');
+        listings = listings.filter((s) => s.name.toLowerCase().includes(areaWord));
+      }
+      if (listings.length) {
+        const individual = listings.filter((s) => s.group?.slug === 'body-whitening');
+        const selected = (individual.length ? individual : listings).slice(0, 3);
+        this.rememberServices(sessionId, selected, goal);
+        return `Our catalog lists these body-brightening options to discuss with staff:\n${selected.map((s) => `- ${serviceLabel(s)} (${this.formatPrice(s.price)})`).join('\n')}\nThe clinic needs to confirm the appropriate option and expected benefits; these listings do not promise a change to your natural skin color.`;
+      }
+    }
+    const recommended = this.recommend(state.query, candidates);
+    if (!recommended.length) {
+      return `I do not have enough confirmed service information to recommend a match for ${goal}${area ? ` on your ${area}` : ''}. Our Free Skin Consultation can help you choose an appropriate option.`;
+    }
+    const selected = recommended.slice(0, 3).map((r) => r.service as ChatService);
+    this.rememberServices(sessionId, selected, goal);
+    const lines = selected.map((s) => {
+      const knowledge = serviceKnowledge(s);
+      const focus = knowledge.concerns.filter((term) => /dull|hydrat|uneven tone|texture/.test(term)).slice(0, 2);
+      const reason = goal === 'brightening' && focus.length ? `General focus: ${focus.join(' and ')}.` : conciseText(knowledge.summary, 165);
+      return `- ${serviceLabel(s)} (${this.formatPrice(s.price)}): ${reason}`;
+    });
+    const framing = goal === 'brightening'
+      ? 'For dullness and a brighter-looking complexion, here are facial options to discuss:'
+      : `Catalog options to discuss for ${goal}:`;
+    return `${framing}\n${lines.join('\n')}\n\nPlease consult with our clinic professionals for personalized advice.`;
   }
 
   /** Resolve vague follow-ups ("how much for that?", "tell me more about it") using session context. */
@@ -2015,6 +2119,12 @@ You should be friendly, professional, and helpful while staying within these bou
     };
     const exactProduct = await this.productAnswer(sessionId, message, undefined, services, true, loadProducts);
     if (exactProduct) return exactProduct;
+    // An answer to our area question is not a new service-name lookup. "Face"
+    // also happens to be the exact name of an RF service in the real catalog.
+    if (sessionId && this.sessionContext.get(sessionId)?.recommendation && this.isRecommendationAreaReply(message)) {
+      const areaReply = this.concernResponse(message, sessionId, services);
+      if (areaReply) return areaReply;
+    }
 
     // Preparation / aftercare: answered from the confirmed knowledge base or an
     // honest "not on file" reply, never fabricated. Checked before greetings so
@@ -2056,17 +2166,20 @@ You should be friendly, professional, and helpful while staying within these bou
     if (treatmentReply) return treatmentReply;
 
     // Greetings / pleasantries next (always on-topic-safe)
-    if (this.isGreeting(lowerMessage)) {
+    if (this.isGreeting(lowerMessage) && this.tokenize(lowerMessage).every((token) => ['hi', 'hello', 'hey', 'morning', 'afternoon', 'evening', 'souvari', 'team'].includes(token))) {
       return this.greetingResponse();
     }
 
-    if (this.isThanks(lowerMessage)) {
+    if (this.isThanks(lowerMessage) && this.tokenize(lowerMessage).every((token) => ['thank', 'thanks'].includes(token))) {
       return this.thanksResponse();
     }
 
     if (this.isHelpRequest(lowerMessage)) {
       return this.HELP_REPLY;
     }
+
+    const concernReply = this.concernResponse(message, sessionId, services);
+    if (concernReply) return concernReply;
 
     const followUpIntents = this.followUpProductIntents(lowerMessage);
     const anchoredProduct = followUpIntents ? await this.productAnswer(sessionId, message, followUpIntents, services, false, loadProducts) : null;
