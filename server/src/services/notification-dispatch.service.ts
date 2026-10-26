@@ -4,6 +4,7 @@ import logger from '../utils/logger';
 import { NotificationType } from '@prisma/client';
 import { env } from '../config/env';
 import { normalizePhone } from '../utils/identity';
+import { buildSmsGreeting } from './sms-message-format';
 import {
   APPOINTMENT_BOOKED_MESSAGE,
   APPOINTMENT_CHECKED_IN_MESSAGE,
@@ -15,8 +16,6 @@ import {
   shouldNotifyStatusChange,
 } from './appointment-notification-messages';
 
-const SMS_GREETING = 'Hello, this is Souvari Skin Lab.';
-
 interface DispatchParams {
   userId: number;
   type: NotificationType;
@@ -25,8 +24,8 @@ interface DispatchParams {
   data?: Record<string, any>;
   sendSMS?: boolean;
   smsPhone?: string;
-  /** Complete SMS body, including branding, when different from the in-app message. */
-  smsMessage?: string;
+  /** Full SMS renderer receives the saved first name and budgets its own length. */
+  smsMessage?: (firstName?: string | null) => string;
 }
 
 class NotificationDispatchService {
@@ -61,7 +60,19 @@ class NotificationDispatchService {
 
       try {
         const provider = getSMSProvider();
-        const smsText = params.smsMessage ?? `${SMS_GREETING} ${message}`;
+        let firstName: string | undefined;
+        try {
+          const customer = await prisma.customers.findUnique({
+            where: { user_id: userId }, select: { first_name: true },
+          });
+          firstName = customer?.first_name;
+        } catch {
+          // Optional personalization must not prevent an otherwise valid SMS send.
+          logger.warn(`[NOTIFICATION] Customer name unavailable for user ${userId}; using a generic greeting`);
+        }
+        const smsText = params.smsMessage
+          ? params.smsMessage(firstName)
+          : `${buildSmsGreeting(firstName)} ${message}`;
         const result = await provider.send(recipient, smsText);
 
         await prisma.sms_logs.create({
@@ -227,7 +238,7 @@ class NotificationDispatchService {
       type: 'appointment_update',
       title: 'Appointment Cancelled',
       message: customerMessage,
-      smsMessage: buildAppointmentCancelledSMS(appointmentDate, appointmentTime, reason),
+      smsMessage: (firstName) => buildAppointmentCancelledSMS(appointmentDate, appointmentTime, reason, firstName),
       data: { appointment_id: appointmentId, new_status: 'cancelled', cancelled_by_customer: !!cancelledByCustomer },
       sendSMS: true,
       smsPhone: customerPhone ?? undefined,

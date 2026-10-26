@@ -1,4 +1,5 @@
 import type { NotificationType } from '@prisma/client';
+import { buildSmsGreeting, shortenSmsNote, smsFirstName } from './sms-message-format';
 
 /**
  * Canonical, status-specific appointment messages for the customer.
@@ -36,17 +37,20 @@ export const APPOINTMENT_CANCELLED_MESSAGE =
   'We hope to welcome you soon!';
 
 /** Keep the cancellation SMS brief; detailed reasons are available in-app. */
-export function buildAppointmentCancelledSMS(appointmentDate: string, appointmentTime: string, reason?: string | null): string {
-  const message = `Hi this is Souvari Skin Lab, Your appointment for ${appointmentDate} at ${appointmentTime} has been cancelled. Please contact us to rebook.`;
+export function buildAppointmentCancelledSMS(appointmentDate: string, appointmentTime: string, reason?: string | null, firstName?: string | null): string {
+  const date = appointmentDate.replace(/\b(January|February|March|April|June|July|August|September|October|November|December)\b/g, (month) => month.slice(0, 3));
+  let message = `${buildSmsGreeting(firstName)} Your ${date} ${appointmentTime} appointment is cancelled.`;
+  let ending = ' Contact us to rebook.';
+  if (message.length + ending.length > 160) ending = '';
+  if (message.length > 160) {
+    const name = smsFirstName(firstName);
+    message = `${name ? `Hi ${name}, ` : ''}Souvari Skin Lab: ${date} ${appointmentTime} cancelled.`;
+  }
   const note = reason?.trim().replace(/\s+/g, ' ');
-  if (!note || note === CUSTOMER_CANCEL_REASON) return message;
-
-  const prefix = `${message} Reason: `;
-  const available = Math.max(0, 160 - prefix.length);
-  const shortened = note.length > available
-    ? `${note.slice(0, Math.max(0, available - 3)).trimEnd()}...`
-    : note;
-  return `${prefix}${shortened}`;
+  if (!note || note === CUSTOMER_CANCEL_REASON) return `${message}${ending}`;
+  const shortened = shortenSmsNote(note, 160 - message.length - ending.length - ' Reason: '.length - (ending ? 1 : 0));
+  const separator = shortened && ending && !/[.!?]$/.test(shortened) ? '.' : '';
+  return `${message}${shortened ? ` Reason: ${shortened}` : ''}${separator}${ending}`;
 }
 
 /** Appointment completed — thank-you and review request. */

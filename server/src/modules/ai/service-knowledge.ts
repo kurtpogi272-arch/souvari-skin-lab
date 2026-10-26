@@ -4,6 +4,7 @@
  * or follows a manufacturer's complete protocol. Prices/inclusions stay in DB.
  */
 import { detectTreatmentInfo } from './clinic-faq';
+import { firstSentence } from './reply-style';
 
 export const SERVICE_SOURCES = {
   hair: 'https://www.aad.org/public/cosmetic/hair-removal/laser-hair-removal-overview',
@@ -192,12 +193,10 @@ export function renderServiceAnswer(service: ChatService, question: string): str
   const asksPrice = /\b(price|cost|how much|fee|pricing)\b/.test(text);
   const asksDuration = /\b(duration|how long|minutes)\b/.test(text);
   const asksExplanation = /\b(used for|purpose|benefits?|tell me|about|compare|explain|describe)\b/.test(text) || (!asksPrice && !asksDuration);
-  const priceOnly = asksPrice && !asksDuration && !asksExplanation;
-  const durationOnly = asksDuration && !asksPrice && !asksExplanation;
-  const lines = [serviceLabel(service)];
-  if (!priceOnly && !durationOnly) lines.push(knowledge.summary);
-  if (!durationOnly) lines.push(servicePrice(service));
-  if (!priceOnly) lines.push(`Duration: ${service.duration_minutes} minutes.`);
+  const lines: string[] = [];
+  if (asksExplanation) lines.push(`${service.name}: ${firstSentence(knowledge.summary)}`);
+  if (asksPrice) lines.push(`${lines.length ? '' : `${service.name}: `}${servicePrice(service).replace(/^Price: /, '')}.`);
+  if (asksDuration) lines.push(`${lines.length ? 'The appointment' : service.name} takes about ${service.duration_minutes} minutes.`);
   if (/\b(includ|package|sessions|bundle|variant|per nail|full set)/.test(text)) {
     const inclusions = service.packages?.inclusions ?? service.inclusions;
     if (Array.isArray(inclusions)) {
@@ -207,6 +206,6 @@ export function renderServiceAnswer(service: ChatService, question: string): str
     if (service.packages) lines.push(`Package: ${service.packages.sessions_included} sessions.`);
     if (service.variants?.length) lines.push(`Options: ${service.variants.slice(0, 4).map((v) => v.label).join(', ')}.`);
   }
-  if (!priceOnly) lines.push('Please consult with our clinic professionals for personalized advice.');
-  return lines.join('\n');
+  if (knowledge.consultationRequired && asksExplanation) lines.push('Our clinician can confirm the details and whether it suits you.');
+  return lines.join(' ');
 }

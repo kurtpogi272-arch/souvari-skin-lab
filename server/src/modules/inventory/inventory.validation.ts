@@ -4,6 +4,8 @@ const inventoryMovementTypeEnum = z.enum([
   'purchase',
   'sale',
   'adjustment',
+  'added_stock',
+  'deducted_stock',
   'consumption',
   'return',
   'damage',

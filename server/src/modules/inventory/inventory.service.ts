@@ -24,7 +24,10 @@ class InventoryService {
       where.product_id = product_id;
     }
 
-    if (type) {
+    if (type === 'added_stock' || type === 'deducted_stock') {
+      where.type = 'adjustment';
+      where.quantity = type === 'added_stock' ? { gt: 0 } : { lt: 0 };
+    } else if (type) {
       where.type = type;
     }
 

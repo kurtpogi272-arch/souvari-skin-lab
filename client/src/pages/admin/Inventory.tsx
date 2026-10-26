@@ -9,6 +9,7 @@ import EmptyState from '@/components/shared/EmptyState';
 import Pagination from '@/components/ui/Pagination';
 import Modal from '@/components/ui/Modal';
 import { registerMoney } from '@/utils/money';
+import { inventoryMovementLabel } from '@/utils/inventoryMovement';
 
 interface Movement {
   id: number;
@@ -82,9 +83,15 @@ export default function Inventory() {
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
   const [purchaseSubmitting, setPurchaseSubmitting] = useState(false);
 
-  const { register: registerAdjust, handleSubmit: handleSubmitAdjust, reset: resetAdjust, formState: { errors: adjustErrors } } = useForm<AdjustmentForm>({
+  const { register: registerAdjust, handleSubmit: handleSubmitAdjust, reset: resetAdjust, watch: watchAdjust, formState: { errors: adjustErrors } } = useForm<AdjustmentForm>({
     defaultValues: { product_id: 0, adjustment_type: 'add', quantity: 1, reason: '' },
   });
+  const addingStock = watchAdjust('adjustment_type') !== 'deduct';
+  const stockAction = addingStock ? 'Add Stock' : 'Deduct Stock';
+  const openAddStock = () => {
+    resetAdjust({ product_id: 0, adjustment_type: 'add', quantity: 1, reason: '' });
+    setAdjustModalOpen(true);
+  };
 
   const { register: registerPurchase, handleSubmit: handleSubmitPurchase, reset: resetPurchase, formState: { errors: purchaseErrors } } = useForm<PurchaseForm>({
     defaultValues: { product_id: 0, quantity: 1, unit_cost: 0 },
@@ -138,7 +145,7 @@ export default function Inventory() {
     setAdjustSubmitting(true);
     try {
       await inventoryApi.adjust(values);
-      toast.success('Stock adjusted successfully');
+      toast.success(values.adjustment_type === 'add' ? 'Stock added successfully' : 'Stock deducted successfully');
       setAdjustModalOpen(false);
       resetAdjust({ product_id: 0, adjustment_type: 'add', quantity: 1, reason: '' });
       fetchMovements();
@@ -193,9 +200,9 @@ export default function Inventory() {
           <p className="text-sm text-neutral-500 mt-1">Track stock movements and manage inventory</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setAdjustModalOpen(true)} className="btn-primary">
+          <button onClick={openAddStock} className="btn-primary">
             <ArrowUpDown size={18} />
-            Adjust Stock
+            Add Stock
           </button>
           <button onClick={() => setPurchaseModalOpen(true)} className="btn-secondary">
             <Package size={18} />
@@ -265,7 +272,8 @@ export default function Inventory() {
                 <select className="select-field w-full sm:w-auto" value={movementTypeFilter} onChange={(e) => setMovementTypeFilter(e.target.value)}>
                   <option value="">All Types</option>
                   <option value="purchase">Purchase</option>
-                  <option value="adjustment">Adjustment</option>
+                  <option value="added_stock">Added Stock</option>
+                  <option value="deducted_stock">Deducted Stock</option>
                   <option value="sale">Sale</option>
                   <option value="consumption">Consumption</option>
                   <option value="return">Return</option>
@@ -310,7 +318,7 @@ export default function Inventory() {
                         </td>
                         <td className="px-6 py-4 font-medium text-neutral-900">{getProductName(m.product)}</td>
                         <td className="px-6 py-4">
-                          <span className={`badge ${getTypeBadge(m.type)}`}>{m.type.replace(/_/g, ' ')}</span>
+                          <span className={`badge ${getTypeBadge(m.type)}`}>{inventoryMovementLabel(m.type, m.quantity)}</span>
                         </td>
                         <td className="px-6 py-4">
                           <span className={`font-medium ${
@@ -388,12 +396,12 @@ export default function Inventory() {
         <div className="card">
           <p className="text-sm text-neutral-500 mb-4">Quick access to stock adjustments and purchase recording.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button onClick={() => setAdjustModalOpen(true)} className="flex items-center gap-4 p-5 rounded-md border-2 border-dashed border-neutral-200 hover:border-primary-300 hover:bg-primary-50/30 transition text-left">
+            <button onClick={openAddStock} className="flex items-center gap-4 p-5 rounded-md border-2 border-dashed border-neutral-200 hover:border-primary-300 hover:bg-primary-50/30 transition text-left">
               <div className="p-3 rounded-md bg-blue-50 text-primary-700">
                 <ArrowUpDown size={22} />
               </div>
               <div>
-                <p className="font-medium text-neutral-900">Stock Adjustment</p>
+                <p className="font-medium text-neutral-900">Add Stock</p>
                 <p className="text-sm text-neutral-500">Add or deduct stock with a reason</p>
               </div>
             </button>
@@ -411,7 +419,7 @@ export default function Inventory() {
       )}
 
       {/* Stock Adjustment Modal */}
-      <Modal open={adjustModalOpen} onClose={() => setAdjustModalOpen(false)} title="Stock Adjustment">
+      <Modal open={adjustModalOpen} onClose={() => setAdjustModalOpen(false)} title={stockAction}>
         <form onSubmit={handleSubmitAdjust(onAdjustSubmit)} className="space-y-4">
           <div>
             <label className="label">Product</label>
@@ -424,7 +432,7 @@ export default function Inventory() {
             {adjustErrors.product_id && <p className="text-xs text-red-600 mt-1">{adjustErrors.product_id.message}</p>}
           </div>
           <div>
-            <label className="label">Adjustment Type</label>
+            <label className="label">Action</label>
             <select className="select-field" {...registerAdjust('adjustment_type')}>
               <option value="add">Add Stock</option>
               <option value="deduct">Deduct Stock</option>
@@ -443,7 +451,7 @@ export default function Inventory() {
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={() => setAdjustModalOpen(false)} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={adjustSubmitting} className="btn-primary">
-              {adjustSubmitting ? 'Processing...' : 'Apply Adjustment'}
+              {adjustSubmitting ? (addingStock ? 'Adding Stock...' : 'Deducting Stock...') : stockAction}
             </button>
           </div>
         </form>

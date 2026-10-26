@@ -50,6 +50,7 @@ import {
 } from './clinic-faq';
 import crypto from 'crypto';
 import { clinicInfoIntent } from './clinic-info';
+import { explainNamedService, explainSkinRejuvenation, isSkinRejuvenationExplanation, wantsServiceExplanation } from './service-explanations';
 import { serviceKnowledge, renderServiceAnswer, serviceLabel, servicePrice, namedServices, renderServiceChoices, conciseText, type ChatService } from './service-knowledge';
 
 export class AiService {
@@ -68,7 +69,10 @@ export class AiService {
     number,
     {
       lastServices: string[]; lastConcern: string | null; lastProducts: ProductRecord[]; lastServiceIds?: number[];
-      recommendation?: { goal: string; query: string; area: 'face' | 'body' | null; areaAsked: boolean };
+      recommendation?: {
+        goal: string; query: string; area: 'face' | 'body' | null; areaAsked: boolean;
+        focus?: string; bodyPart?: string; bodyPartAsked?: boolean;
+      };
     }
   >();
 
@@ -1073,9 +1077,7 @@ export class AiService {
   }
 
   private readonly OFF_TOPIC_REPLY =
-    "I'm here to answer questions about Souvari Skin Lab — our services, pricing, " +
-    'clinic hours, and location. That question is outside what I can help with. ' +
-    'If you have any questions about our treatments or pricing, feel free to ask!';
+    'That question is outside what I can help with. I can answer questions about Souvari Skin Lab’s services, products, prices, hours, and location.';
 
   private readonly HELP_REPLY =
     "I can help you with:\n" +
@@ -1086,11 +1088,11 @@ export class AiService {
     "What would you like to know?";
 
   private greetingResponse(): string {
-    return `Hello! Welcome to Souvari Skin Lab. I can help you with:\n- Service information and pricing\n- Best-selling and recommended services\n- Clinic hours and contact details\n\nHow can I assist you today?\n\nPlease consult with our clinic professionals for personalized advice.`;
+    return 'Hi! I can help with our treatments, products, prices, or visiting the clinic. What would you like to know?';
   }
 
   private thanksResponse(): string {
-    return "You're welcome! If you have any other questions, feel free to ask. For personalized advice, please consult with our clinic professionals.";
+    return "You're welcome! Let me know if you need anything else.";
   }
 
   private emergencyResponse(): string {
@@ -1327,7 +1329,7 @@ IMPORTANT SAFETY INSTRUCTIONS:
 - If the customer mentions a medical condition (for example pregnancy, breastfeeding, eczema, psoriasis, diabetes), a medication (for example Accutane/isotretinoin or blood thinners), a known allergy, or asks whether a treatment is safe or suitable, give only GENERAL service information and tell them to consult our clinic professionals — they can start with the FREE "Free Skin Consultation". Do not assess their condition.
 - If the customer describes a possible emergency (difficulty breathing, swelling of the face/lips/tongue/throat, chest pain, fainting, severe bleeding), tell them to call 911 or their local emergency number immediately.
 - ONLY recommend services that exist in the system listed above
-- Always include a disclaimer: "Please consult with our clinic professionals for personalized advice."
+- For personal treatment recommendations, give a brief suggestion to speak with clinic professionals. Do not repeat a generic disclaimer on factual product definitions, prices, hours or location replies.
 - If you are uncertain about anything, say: "I don't have enough information. Please contact the clinic directly."
 - Do not make up services, prices, or information not provided above
 - Focus on service information, pricing, clinic hours, best-selling services, and general beauty/aesthetics questions
@@ -1339,7 +1341,8 @@ STRICT TOPIC RULE:
 - Do not engage with, elaborate on, or answer off-topic questions under any circumstances.
 
 RESPONSE GUIDELINES:
-- Be concise. Aim for at most 3-4 short sentences per answer. When listing services, give at most 3 options, each with a one-line reason.
+- Answer the actual question first in 1-2 short, plain-English sentences. Avoid field labels such as Category, Description, Purpose and Benefits unless the user asks for a detailed breakdown. Give price or availability only when asked. When recommending, offer at most 2 relevant options; never pad a list. Finish complete sentences rather than cutting them off with ellipses.
+- For "tell me about" or "explain" questions about a service or treatment category, use a compact educational explanation: what it is, what it is for, and actual services at the clinic. Explain before listing examples; do not turn an educational question into personalized recommendations. Keep ordinary price/use questions brief.
 - If the user asks a one-word or very short question naming a treatment, service, or concern (e.g. "acne", "nails", "botox", "laser", "hifu"), answer immediately with 1-2 short sentences and 1-2 matching services with prices. Do NOT ask a clarifying question first; keep it brief.
 - NEVER dump the full service menu or the full price list.
 - CLARIFY FIRST, BUT ONLY ONCE: If the user asks a broad service, recommendation, or pricing question (such as "what services do you have", "recommend something", "what should I get", or "prices") WITHOUT naming a skin concern, a specific area, or a specific treatment, do NOT answer with a list yet. Ask ONE short question to understand their need — e.g. their main skin concern/goal and whether it is for their face or body.
@@ -1427,6 +1430,9 @@ You should be friendly, professional, and helpful while staying within these bou
     if (this.isMedicalAdvice(text)) return this.medicalAdviceResponse();
     const operational = await this.operationalResponse(text);
     if (operational) return operational;
+    if (/\b(products?|items?)\b/.test(text) && /\b(best[- ]?sell(?:ing|ers?)|top[- ]?sell(?:ing|ers?)|most (?:bought|purchased|sold|popular)|popular)\b/.test(text)) {
+      return this.bestSellingProductsResponse(sessionId);
+    }
     if (this.isClinicInfoRequest(text)) return this.clinicInfoResponse();
     if (this.isHelpRequest(text)) return this.HELP_REPLY;
     if (/^(hi|hello|hey|good morning|good afternoon|good evening)[!?.\s]*$/.test(text.trim())) return this.greetingResponse();
@@ -1602,6 +1608,32 @@ You should be friendly, professional, and helpful while staying within these bou
     }
   }
 
+  private async bestSellingProductsResponse(sessionId: number): Promise<string> {
+    const products = await this.safeLoadRetailProducts();
+    if (!products) return "I can't check our products right now. Please try again shortly.";
+    if (!products.length) return "We don't have a retail product list available right now.";
+    try {
+      const sales = await prisma.transaction_items.groupBy({
+        by: ['product_id'],
+        where: {
+          product_id: { in: products.map((p) => p.id) }, quantity: { gt: 0 },
+          transaction: { deleted_at: null, payment_status: 'paid', type: 'sale' },
+        },
+        _sum: { quantity: true },
+        orderBy: [{ _sum: { quantity: 'desc' } }, { product_id: 'asc' }],
+        take: 3,
+      });
+      const ranked = sales.filter((row) => Number(row._sum.quantity ?? 0) > 0)
+        .map((row) => products.find((p) => p.id === row.product_id)).filter((p): p is ProductRecord => !!p);
+      if (!ranked.length) return "We don't have enough recorded product sales to name a best seller yet. I can still help you compare our products.";
+      this.rememberProducts(sessionId, ranked);
+      return `Our top products by recorded paid sales are ${ranked.map((p) => p.name.replace(/\s*\(Aftercare\b[^)]*\)\s*$/i, '').trim()).join(', ')}.`;
+    } catch {
+      console.error('[chat] Product sales ranking could not be loaded');
+      return "I can't check product sales right now, so I don't want to guess at our best sellers.";
+    }
+  }
+
   private formatServiceLine(s: any): string {
     return `- ${s.name}: ${this.formatPrice(s.price)} (${s.duration_minutes} min)`;
   }
@@ -1670,20 +1702,14 @@ You should be friendly, professional, and helpful while staying within these bou
 
   /** One-round clarification probe used before recommending / listing when the request is too vague. */
   private clarifyResponse(kind: 'recommend' | 'services' | 'pricing'): string {
-    const categories =
-      'We cover facials, laser and skin rejuvenation, hair removal, body treatments, injectables, consultations, and nail/spa care.';
-    const concern =
-      'Could you tell me your main skin concern or goal — for example acne, dark spots, wrinkles, dryness, or whitening — and whether it is for your face or body?';
-    const free =
-      'You can also start with our FREE "Free Skin Consultation" — available to new and returning clients — and our professionals will build the right plan for you.';
     switch (kind) {
       case 'recommend':
-        return `I would love to recommend the right treatment for you. ${concern}\n\n${free}`;
+        return 'What would you like help with—acne, dryness, uneven tone, or something else?';
       case 'pricing':
-        return `${categories}\n\nWhich service or category would you like pricing for?`;
+        return 'Which service would you like the price for?';
       case 'services':
       default:
-        return `${categories}\n\n${concern} Or you can just name a category and I will show you its top services.\n\n${free}`;
+        return 'We offer facials, laser treatments, hair removal, body care, and nail services. What are you interested in?';
     }
   }
 
@@ -1723,7 +1749,7 @@ You should be friendly, professional, and helpful while staying within these bou
   }
 
   private isRecommendationAreaReply(message: string): boolean {
-    return /^(?:(?:for|my|the)\s+)*(face|facial|body|underarms?|armpits?|arms?|legs?|back|bikini)(?:\s+(?:please|area))?[?.!\s]*$/.test(message.trim().toLowerCase());
+    return /^(?:(?:for|my|the)\s+)*(face|facial|body|underarms?|armpits?|arms?|legs?|back|bikini|knees?|elbows?|neck|nape|buttocks?|chest|abdomen|stomach)(?:\s+(?:please|area))?[?.!\s]*$/.test(message.trim().toLowerCase());
   }
 
   /** Personal concerns are not catalog-name searches. Clarify only missing context. */
@@ -1738,7 +1764,7 @@ You should be friendly, professional, and helpful while staying within these bou
       if (sessionId) this.rememberContext(sessionId, [], null);
       const context = sessionId ? this.sessionContext.get(sessionId) : undefined;
       if (context) context.recommendation = undefined;
-      return 'Are you asking about your natural skin tone, dark spots, or uneven tone? What would you like help with?';
+      return 'Do you mean your natural skin tone, dark spots, or uneven tone?';
     }
 
     const previous = sessionId ? this.sessionContext.get(sessionId)?.recommendation : undefined;
@@ -1750,14 +1776,22 @@ You should be friendly, professional, and helpful while staying within these bou
     const groups = AiService.SKIN_CONCERNS.filter((g) => this.concernHits(lower, tokens, g).length > 0);
     const answeringArea = !!previous && areaOnly;
     const goal = answeringArea ? previous.goal : brightening ? 'brightening' : hasConcern ? groups.map((g) => g.label).join(', ') : previous!.goal;
+    const focus = answeringArea || (!hasConcern && !brightening) ? previous?.focus ?? goal
+      : /\bdark spots?\b/.test(lower) ? 'dark spots'
+      : /\buneven (?:skin )?tone\b/.test(lower) ? 'uneven tone' : goal;
     const sameGoal = previous?.goal === goal;
-    const area = /\b(underarms?|armpits?|arms?|legs?|back|bikini|body)\b/.test(lower) ? 'body'
+    const sameFocus = sameGoal && (previous.focus ?? previous.goal) === focus;
+    const area = /\b(underarms?|armpits?|arms?|legs?|back|bikini|body|knees?|elbows?|neck|nape|buttocks?|chest|abdomen|stomach)\b/.test(lower) ? 'body'
       : /\b(face|facial)\b/.test(lower) ? 'face' : sameGoal ? previous?.area ?? null : null;
+    const part = /\b(underarms?|armpits?|knees?|elbows?|bikini|buttocks?|neck|nape|arms?|legs?|back|chest|abdomen|stomach)\b/.exec(lower)?.[1];
+    const bodyPart = part ? (/^armpit|^underarm/.test(part) ? 'underarm' : part.replace(/s$/, ''))
+      : sameFocus && area === 'body' ? previous?.bodyPart : undefined;
     const state = {
-      goal,
+      goal, focus, bodyPart,
       query: answeringArea ? previous.query : brightening ? 'brightening dullness uneven tone' : hasConcern ? groups.map((g) => g.label).join(' ') : previous!.query,
       area,
       areaAsked: sameGoal ? previous?.areaAsked ?? false : false,
+      bodyPartAsked: sameFocus ? previous?.bodyPartAsked ?? false : false,
     };
     // A new concern explicitly ends the product topic, including a previously
     // incorrect match in an ongoing conversation.
@@ -1767,7 +1801,13 @@ You should be friendly, professional, and helpful while staying within these bou
 
     if (goal === 'brightening' && !area && !state.areaAsked) {
       state.areaAsked = true;
-      return 'Understood—you are looking for brightening options. Is this for your face or body?';
+      return focus === 'dark spots' ? 'Where are the dark spots—on your face or body?'
+        : focus === 'uneven tone' ? 'Is the uneven tone on your face or body?'
+        : 'Is this for your face or body?';
+    }
+    if (/\bacne\b/.test(goal) && !area && !state.areaAsked) {
+      state.areaAsked = true;
+      return 'Is the acne on your face or body?';
     }
 
     let candidates = services;
@@ -1786,35 +1826,40 @@ You should be friendly, professional, and helpful while staying within these bou
       candidates = services.filter((s) => s.category === 'body' || /body|whitening|radio-frequency|rf-7|ultratight/.test(s.group?.slug ?? ''));
     }
     if (goal === 'brightening' && area === 'body') {
-      let listings = candidates.filter((s) => ['body-whitening', 'body-whitening-7'].includes(s.group?.slug ?? ''));
-      const part = /\b(underarms?|armpits?|knees?|elbows?|bikini|buttocks?|neck|nape)\b/.exec(lower)?.[1];
-      if (part) {
-        const areaWord = /^armpit|^underarm/.test(part) ? 'underarm' : part.replace(/s$/, '');
-        listings = listings.filter((s) => s.name.toLowerCase().includes(areaWord));
+      if (!bodyPart) {
+        if (!state.bodyPartAsked) {
+          state.bodyPartAsked = true;
+          return focus === 'dark spots' ? 'Where on your body are the dark spots?'
+            : 'Which part of your body—for example, underarms, elbows, or knees?';
+        }
+        return 'The right option depends on the area. Tell me where the spots or uneven tone are, and I can narrow it down.';
       }
+      let listings = candidates.filter((s) => ['body-whitening', 'body-whitening-7'].includes(s.group?.slug ?? ''));
+      listings = listings.filter((s) => s.name.toLowerCase().includes(bodyPart));
       if (listings.length) {
         const individual = listings.filter((s) => s.group?.slug === 'body-whitening');
-        const selected = (individual.length ? individual : listings).slice(0, 3);
+        const selected = (individual.length ? individual : listings).slice(0, 2);
         this.rememberServices(sessionId, selected, goal);
-        return `Our catalog lists these body-brightening options to discuss with staff:\n${selected.map((s) => `- ${serviceLabel(s)} (${this.formatPrice(s.price)})`).join('\n')}\nThe clinic needs to confirm the appropriate option and expected benefits; these listings do not promise a change to your natural skin color.`;
+        return `For that area, we list:\n${selected.map((s) => `- ${s.name} — ${this.formatPrice(s.price)}`).join('\n')}\nOur team can explain which option fits your concern.`;
       }
     }
+    if (!/\bsevere\b/.test(lower)) candidates = candidates.filter((s) => !/\bsevere\b/i.test(s.name));
     const recommended = this.recommend(state.query, candidates);
     if (!recommended.length) {
-      return `I do not have enough confirmed service information to recommend a match for ${goal}${area ? ` on your ${area}` : ''}. Our Free Skin Consultation can help you choose an appropriate option.`;
+      return "I don't have enough information to suggest a good match. Our free skin consultation can help you choose.";
     }
-    const selected = recommended.slice(0, 3).map((r) => r.service as ChatService);
+    const selected = recommended.slice(0, 2).map((r) => r.service as ChatService);
     this.rememberServices(sessionId, selected, goal);
     const lines = selected.map((s) => {
       const knowledge = serviceKnowledge(s);
       const focus = knowledge.concerns.filter((term) => /dull|hydrat|uneven tone|texture/.test(term)).slice(0, 2);
-      const reason = goal === 'brightening' && focus.length ? `General focus: ${focus.join(' and ')}.` : conciseText(knowledge.summary, 165);
-      return `- ${serviceLabel(s)} (${this.formatPrice(s.price)}): ${reason}`;
+      const reason = goal === 'brightening' && focus.length ? `For ${focus.join(' and ')}.` : '';
+      return `- ${s.name} — ${this.formatPrice(s.price)}${reason ? `: ${reason}` : ''}`;
     });
     const framing = goal === 'brightening'
-      ? 'For dullness and a brighter-looking complexion, here are facial options to discuss:'
-      : `Catalog options to discuss for ${goal}:`;
-    return `${framing}\n${lines.join('\n')}\n\nPlease consult with our clinic professionals for personalized advice.`;
+      ? 'For a brighter-looking complexion, you could ask about:'
+      : `For ${goal}, you could ask about:`;
+    return `${framing}\n${lines.join('\n')}\nOur team can help you choose what suits your skin.`;
   }
 
   /** Resolve vague follow-ups ("how much for that?", "tell me more about it") using session context. */
@@ -2148,10 +2193,18 @@ You should be friendly, professional, and helpful while staying within these bou
       !/\b(what is|tell me about|explain|describe|how much|price of|cost of)\b/.test(lowerMessage);
     if (named.length && !retailQuestion && !concernQuestion) {
       this.rememberServices(sessionId, named);
+      if (named.length === 1 && wantsServiceExplanation(message) && !detectTreatmentInfo(message)) {
+        return explainNamedService(named[0], message);
+      }
       if (named.length > 1 && /\b(compare|versus|vs|difference|better)\b/.test(lowerMessage) && new Set(named.map((s) => s.name)).size === named.length) {
         return `${named.slice(0, 3).map((s) => `- ${serviceLabel(s)} (${servicePrice(s).replace('Price: ', '')}, ${s.duration_minutes} min): ${conciseText(serviceKnowledge(s).summary, 120)}`).join('\n')}\n\nPlease consult with our clinic professionals for personalized advice.`;
       }
       return named.length === 1 ? renderServiceAnswer(named[0], message) : renderServiceChoices(named);
+    }
+    if (isSkinRejuvenationExplanation(message)) {
+      const explanation = explainSkinRejuvenation(services);
+      this.rememberServices(sessionId, explanation.discussed);
+      return explanation.response;
     }
 
     // Administrative policy questions (payments, deposits, cancellations,

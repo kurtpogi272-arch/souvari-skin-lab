@@ -17,6 +17,7 @@ invent information.
 | `server/src/modules/ai/ai.service.ts` | Router, intent handling, product lookup, recommendation engine, prompt building, error handling |
 | `server/src/modules/ai/product-knowledge.ts` | Retail product matching, intents, replies |
 | `server/src/modules/ai/service-knowledge.ts` | Group-aware service matching, concise descriptions, provenance, prices/variants |
+| `server/src/modules/ai/service-explanations.ts` | Explanation intent, rejuvenation spelling variants, educational topic/service replies |
 | `server/src/modules/ai/clinic-info.ts` | Fast operational intent recognition, including finding the store |
 | `server/src/modules/ai/clinic-safety.ts` | Emergency and medical-advice detection + referral copy |
 | `server/src/modules/ai/aftercare-knowledge.ts` | Preparation/aftercare intent + confirmed knowledge base |
@@ -79,6 +80,29 @@ clarification; group metadata distinguishes RF, HIFU, diode and wax.
 
 ## Response speed and concise answers
 
+Explicit service explanation questions have their own response mode. For
+`Tell me about Skin Rejuvinating` (and rejuvenating/rejuvination/rejuvenation
+variants), the assistant explains **what it is**, **what it is for**, and gives
+grounded **services at Souvari**. It uses facial examples from different recorded
+treatment families rather than immediately recommending three treatments or
+mistaking body HIFU entries for facial examples. Named `tell me about` service
+questions receive the same identity/purpose structure. Price/use questions stay
+short, and product descriptions keep their usual brief format. No model
+fine-tuning, catalog rewrite, or extra model request is required for this route.
+
+Product definitions and purpose questions now get one complete sentence from the
+recorded purpose/description, rather than a dump of category, description,
+purpose, benefits, price and stock. `What is the use of ...?` is a purpose intent.
+Prices, stock and related services are added only when requested. Routine factual
+answers do not repeat a medical disclaimer; personalized recommendations retain
+a short invitation to ask clinic staff. Medical/safety routing remains separate.
+
+`Best selling products` ranks active retail products by positive quantities in
+non-deleted, **paid sale** transactions. It does not use catalog order, stock
+counts, service bookings or refund/void rows as a popularity signal. If no sales
+are recorded, the answer says there is not enough data; retrieval errors do not
+fall back to a list mislabelled as best sellers.
+
 - Model calls have an **8-second provider timeout** and **zero SDK retries**.
   There is no application retry loop. A provider failure returns the already
   computed deterministic fallback without querying the catalogs again.
@@ -88,7 +112,7 @@ clarification; group metadata distinguishes RF, HIFU, diode and wax.
   is cached for **30 seconds**. Catalog changes become visible within that bound;
   operational FAQ settings and retail stock are read fresh.
 - Price-only and duration-only replies omit unrelated sections. Ordinary product
-  lists and recommendations show at most three choices. An explicit request for
+  lists show at most three choices; recommendations show at most two. An explicit request for
   **all products** returns the complete customer-visible list.
 - Product recommendations match recorded descriptions, purposes and benefits,
   exclude out-of-stock items, and do not infer ingredients or instructions.
@@ -120,6 +144,13 @@ searchable, and explicit product recommendations use recorded purposes.
   with unrelated PMU, body contouring, or post-procedure products.
 - Body-brightening listings are identified as catalog options to discuss with
   staff; their exact protocol and expected benefits still require confirmation.
+  A general answer of `body` prompts for the specific body part before listing
+  treatments, so it does not arbitrarily suggest bikini/buttock services. That
+  body part is remembered for follow-ups.
+- The specific concern is tracked as well as the broad goal: adding dark spots
+  to a body-brightening conversation asks where on the body they are, rather
+  than repeating a list for arbitrary areas. Switching to a different concern
+  such as acne checks face/body context again instead of assuming a location.
 - `Recommend a service that ...` is a new request, not a pronoun follow-up about
   a previous product. A new concern clears the earlier product topic.
 
@@ -187,7 +218,8 @@ answered with a product's description.
 - Emergencies are always directed to emergency services (911 / nearest ER).
 - Medical and suitability questions are referred to clinic professionals.
 - Only services that exist in the database are ever recommended.
-- Every recommendation ends with the consultation disclaimer.
+- Personalized recommendations include a brief invitation to consult clinic
+  staff; factual definitions and prices do not repeat a generic disclaimer.
 - Administrative policies (cancellation, refund, payment, parking, ...) and
   treatment logistics are never invented — if they are not stored, the assistant
   says so and points to the clinic.

@@ -6,6 +6,7 @@ const { db, modelCreate, modelConstructor } = vi.hoisted(() => ({
     chat_messages: { create: vi.fn(), findMany: vi.fn() },
     services: { findMany: vi.fn() }, products: { findMany: vi.fn() },
     appointments: { findMany: vi.fn() }, system_settings: { findMany: vi.fn() },
+    transaction_items: { groupBy: vi.fn() },
   },
   modelCreate: vi.fn(), modelConstructor: vi.fn(),
 }));
@@ -38,6 +39,7 @@ beforeEach(() => {
   db.services.findMany.mockResolvedValue(services);
   db.products.findMany.mockResolvedValue([]);
   db.appointments.findMany.mockResolvedValue([]);
+  db.transaction_items.groupBy.mockResolvedValue([]);
   db.system_settings.findMany.mockResolvedValue([
     { setting_key: 'clinic_address', setting_value: JSON.stringify('2nd Floor, District Mall, Cavite') },
     { setting_key: 'clinic_phone', setting_value: JSON.stringify('+63 981 689 9909') },
@@ -60,6 +62,8 @@ describe('reported brightening conversation regression', () => {
     db.products.findMany.mockResolvedValue([
       { id: 10, name: 'Post Healing Cream (Aftercare for Warts/Skin Tag Removal)', description: 'Post-procedure aftercare cream.', purpose: 'For moisturising small treated areas after a removal procedure.', benefits: 'Supports comfort after the procedure.', sku: 'HEAL', unit: 'bottle', unit_price: 150, current_stock: 10, category: null, service_inventory_items: [] },
       { id: 11, name: 'Vitamin C Serum', description: 'A cosmetic serum.', purpose: 'Supports brightening for dull, uneven tone.', benefits: 'Supports a brighter-looking complexion.', sku: 'VITC', unit: 'bottle', unit_price: 500, current_stock: 10, category: null, service_inventory_items: [] },
+      { id: 12, name: 'Aloe Vera Gel', description: 'A soothing topical gel.', purpose: 'Used to hydrate and soothe dry, irritated or sun-exposed skin.', benefits: 'Helps support hydration.', sku: 'ALOE', unit: 'bottle', unit_price: 500, current_stock: 10, category: null, service_inventory_items: [] },
+      { id: 13, name: 'Bump Eraiser (Aftercare for Hot Waxing)', description: 'A concentrated aftercare solution.', purpose: 'Used after waxing to help manage ingrown hairs, redness and small bumps.', benefits: 'Supports smoother-looking skin.', sku: 'BUMP', unit: 'bottle', unit_price: 250, current_stock: 10, category: null, service_inventory_items: [] },
     ]);
   });
 
@@ -113,7 +117,7 @@ describe('reported brightening conversation regression', () => {
 
   it('handles a greeting plus a specific concern without replying only with a greeting', async () => {
     const result = (await send('Hi, I want to brighten my skin')).response;
-    expect(result).toContain('brightening options');
+    expect(result).toContain('face or body');
     expect(result).not.toContain('Hello! Welcome');
   });
 
@@ -122,7 +126,10 @@ describe('reported brightening conversation regression', () => {
       const result = (await send(message)).response;
       expect(result).not.toContain('Post Healing Cream');
       expect(result).not.toContain('main skin concern');
-      expect(result).toContain('₱');
+      if (message.includes('acne')) {
+        expect(result).toBe('Is the acne on your face or body?');
+        expect((await send('face')).response).toContain('₱');
+      } else expect(result).toContain('₱');
     },
   );
 
@@ -135,9 +142,88 @@ describe('reported brightening conversation regression', () => {
     expect(followUp).toContain('Vitamin C Serum');
     expect(followUp).toContain('₱500');
   });
+
+  it('asks for the body part instead of suggesting arbitrary bikini or buttock services', async () => {
+    await send('I have dark skin');
+    await send('uneven tone');
+    const body = (await send('for my body')).response;
+    expect(body).toContain('Which part of your body');
+    expect(body).not.toContain('₱');
+    expect(body).not.toContain('Bikini');
+    const newConcern = (await send('I have dark spots')).response;
+    expect(newConcern).toBe('Where on your body are the dark spots?');
+    expect(newConcern).not.toContain('Underarms - Carbon');
+    expect((await send('I have acne')).response).toBe('Is the acne on your face or body?');
+  });
+
+  it('remembers the specific body part for a same-concern follow-up', async () => {
+    await send('uneven tone');
+    await send('body');
+    const selected = (await send('underarms')).response;
+    expect(selected).toContain('Underarms - Carbon Laser Whitening');
+    const followUp = (await send('Can you recommend a service?')).response;
+    expect(followUp).toContain('Underarms - Carbon Laser Whitening');
+    expect(followUp).not.toContain('Which part');
+  });
+
+  it.each([
+    ['What is aloe vera gel?', 'Aloe Vera Gel helps hydrate and soothe dry, irritated or sun-exposed skin.'],
+    ['What is the use of Bump eraiser?', 'Bump Eraiser is used after waxing to help manage ingrown hairs, redness and small bumps.'],
+  ])('answers "%s" in one complete, conversational sentence', async (message, expected) => {
+    const reply = (await send(message)).response;
+    expect(reply).toBe(expected);
+    expect(reply).not.toMatch(/Category:|Description:|Purpose:|Benefits:|Price:|Availability:|\.\.\./);
+    expect(reply).not.toContain('Please consult');
+    expect(reply.split(/\s+/).length).toBeLessThan(40);
+  });
+
+  it('answers best-selling products using sales quantities rather than alphabetic catalog order', async () => {
+    db.transaction_items.groupBy.mockResolvedValue([
+      { product_id: 12, _sum: { quantity: 10 } }, { product_id: 13, _sum: { quantity: 3 } },
+    ]);
+    const reply = (await send('What are your best selling products?')).response;
+    expect(reply).toBe('Our top products by recorded paid sales are Aloe Vera Gel, Bump Eraiser.');
+    expect(db.transaction_items.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        quantity: { gt: 0 }, transaction: { deleted_at: null, payment_status: 'paid', type: 'sale' },
+      }),
+      orderBy: [{ _sum: { quantity: 'desc' } }, { product_id: 'asc' }],
+    }));
+    expect(modelCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not invent best sellers when there are no product sales', async () => {
+    const reply = (await send('What are your best selling products?')).response;
+    expect(reply).toContain("don't have enough recorded product sales");
+    expect(reply).not.toContain('Post Healing Cream');
+    expect(reply).not.toContain('Vitamin C Serum');
+    expect(reply).not.toContain('and 8 more');
+  });
+
+  it('does not substitute a catalog list when checking sales fails', async () => {
+    db.transaction_items.groupBy.mockRejectedValue(new Error('Database unavailable'));
+    const reply = (await send('most popular products?')).response;
+    expect(reply).toContain("can't check product sales");
+    expect(reply).not.toContain('Vitamin C Serum');
+    expect(reply).not.toContain('We currently carry');
+  });
 });
 
 describe('fast deterministic replies when AI is configured', () => {
+  it.each(['Tell me about Skin Rejuvinating', 'Explain skin rejuvenation'])(
+    'explains "%s" before considering recommendations or product matches', async (message) => {
+      const result = await ai.processMessage({ message });
+      expect(result.response).toContain('What it is:');
+      expect(result.response).toContain("What it's for:");
+      expect(result.response).toContain('Services at Souvari:');
+      expect(result.response).toContain('10 in 1 HydraFacial');
+      expect(result.response).not.toContain('you could ask about');
+      expect(result.response).not.toContain('What would you like help with');
+      expect(result.response).not.toContain('outside what I can help with');
+      expect(modelCreate).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     'How can I locate your store?', 'Hi, how can I find your clinic?', 'How do I get there?',
     'Where are you located?', 'Directions to your clinic', 'Can you show me a map of your store?',
@@ -188,8 +274,8 @@ describe('fast deterministic replies when AI is configured', () => {
         sku: 'NIMBUS', unit: 'piece', unit_price: 500, current_stock: 10, category: null, service_inventory_items: [],
       }]);
       const result = await ai.processMessage({ message: `What is ${name} used for?` });
-      expect(result.response).toContain(name);
-      expect(result.response).toContain('Purpose: Supports skin hydration.');
+      expect(result.response).toContain(name.split(' (Aftercare')[0]);
+      expect(result.response).toContain('supports skin hydration.');
       expect(result.response).not.toContain('specific aftercare');
       expect(result.response).not.toContain('Which treatment');
       expect(modelCreate).not.toHaveBeenCalled();
@@ -284,6 +370,6 @@ describe('service knowledge precision', () => {
     expect(result).toContain('VIP: ₱1,000');
     expect(result).toContain('Non-member: ₱1,400');
     expect(result).not.toContain('hydration');
-    expect(result.split('\n')).toHaveLength(2);
+    expect(result.split('\n')).toHaveLength(1);
   });
 });

@@ -60,9 +60,19 @@ describe('appointment-notification-messages', () => {
   });
 
   it('includes the website cancellation note in the SMS', () => {
-    expect(buildAppointmentCancelledSMS('October 23, 2026', '14:00', '  Staff unavailable  ')).toBe(
-      'Hi this is Souvari Skin Lab, Your appointment for October 23, 2026 at 14:00 has been cancelled. Please contact us to rebook. Reason: Staff unavailable'
+    expect(buildAppointmentCancelledSMS('October 23, 2026', '14:00', '  Staff unavailable  ', 'Maria')).toBe(
+      'Hi Maria, this is Souvari Skin Lab. Your Oct 23, 2026 14:00 appointment is cancelled. Reason: Staff unavailable. Contact us to rebook.'
     );
+  });
+
+  it.each(['Mary Anne', 'José', '李明', 'A'.repeat(100)])('keeps the first name, appointment and status in a concise cancellation: %s', (name) => {
+    const message = buildAppointmentCancelledSMS('September 23, 2026', '14:00', 'Clinic scheduling conflict. '.repeat(20), name);
+    expect(message).toContain(`Hi ${name},`);
+    expect(message).toContain('Sep 23, 2026');
+    expect(message).toContain('14:00');
+    expect(message).toContain('cancelled');
+    expect(message.length).toBeLessThanOrEqual(160);
+    expect(message).not.toContain('undefined');
   });
 
   it('omits an empty or automatic placeholder reason from the SMS', () => {

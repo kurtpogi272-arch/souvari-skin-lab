@@ -1,6 +1,6 @@
 import prisma from '../../config/database';
 import { roundPeso } from '../../services/pricing-engine.core';
-import { conciseText } from './service-knowledge';
+import { firstSentence, productFact } from './reply-style';
 
 /**
  * Database-driven product knowledge for the clinic assistant.
@@ -346,7 +346,7 @@ export function renderCatalogReply(products: ProductRecord[], showAll = false): 
   return (
     `We currently carry these ${products.length} products:\n${list}` +
     (rest > 0 ? `\n- and ${rest} more` : '') +
-    `\n\nAsk about an item, a concern, or ask for all products.\n\n${DISCLAIMER}`
+    '\nAsk about an item, or say "all products" to see the full list.'
   );
 }
 
@@ -473,11 +473,11 @@ export function detectIntents(query: NormalizedQuery | string): ProductIntent[] 
     add('usage');
   }
 
-  if (/\bbenefits?\b|\bgood for\b|\bhelp(s)? with\b|\bwhy should\b|\bwhat does .* do\b|\badvantages?\b/.test(text)) {
+  if (/\bbenefits?\b|\bhelp(s)? with\b|\bwhy should\b|\badvantages?\b/.test(text)) {
     add('benefits');
   }
 
-  if (/\bused for\b|\bfor what\b|\bwhat is .* for\b|\bpurpose\b|\bwhat does .* (do|target)\b|\bsuitable for\b|\bgood for\b|\bconcern\b/.test(text)) {
+  if (/\bused for\b|\b(?:the )?use of\b|\bfor what\b|\bwhat is .* for\b|\bpurpose\b|\bwhat does .* (do|target)\b|\bsuitable for\b|\bgood for\b|\bconcern\b/.test(text)) {
     add('purpose');
   }
 
@@ -531,89 +531,36 @@ function peso(value: number): string {
  * and each one only when the underlying data exists.
  */
 export function renderProductAnswer(product: ProductRecord, intents: ProductIntent[]): string {
-  const requested = intents.length > 0 ? intents : ['overview'];
-  const lines: string[] = [];
-  const wantsOverview = requested.includes('overview');
-  const narrowOnly = requested.every((i) => i === 'price' || i === 'availability');
-
-  // Header carries the product name so a one-word reply still reads naturally.
-  lines.push(wantsOverview ? product.name : `${product.name}:`);
-
-  // Category belongs with the header, otherwise a question that also asked for
-  // the price would print the price before the product is even described.
-  if (wantsOverview && product.category) lines.push(`Category: ${product.category}`);
-
-  const descriptive = descriptiveFields(product);
-
-  if (wantsOverview) {
-    if (descriptive.length > 0) {
-      lines.push(...descriptive.map((f) => `${f.label}: ${conciseText(f.value, 120)}`));
-    } else {
-      lines.push(
-        'We currently list this product by name and price only — fuller details are not on file yet.',
-      );
-    }
-  }
-
-  if (!wantsOverview) {
-    for (const [intent, label] of [['purpose', 'Purpose'], ['benefits', 'Benefits']] as const) {
-      const field = descriptive.find((f) => f.label === label);
-      if (requested.includes(intent) && field) lines.push(`${label}: ${conciseText(field.value, 220)}`);
-    }
-  }
-
-  // Explicit requests for details the clinic has not recorded must be answered
-  // honestly rather than skipped or guessed.
-  const askedButMissing: string[] = [];
-  for (const intent of requested) {
-    if (intent === 'purpose' && !descriptive.some((f) => f.label === 'Purpose')) askedButMissing.push('what it is used for');
-    if (intent === 'benefits' && !descriptive.some((f) => f.label === 'Benefits')) askedButMissing.push('its benefits');
-    if (intent === 'ingredients' && !descriptive.some((f) => f.label === 'Ingredients')) askedButMissing.push('its ingredients');
-    if (intent === 'usage' && !descriptive.some((f) => f.label === 'Usage')) askedButMissing.push('usage instructions');
-  }
-  if (askedButMissing.length > 0) {
-    lines.push(`About ${askedButMissing.join(', ')}: ${MISSING_FIELD_NOTE}`);
-  }
-
-  // Track which fields have already been emitted so an overview combined with an
-  // explicit question never repeats a line.
+  const requested = new Set<ProductIntent>(intents.length ? intents : ['overview']);
+  const name = product.name.replace(/\s*\(Aftercare\b[^)]*\)\s*$/i, '').trim();
+  const sentences: string[] = [];
+  const values = descriptiveFields(product);
+  const missing: string[] = [];
   const emitted = new Set<string>();
-
-  if (requested.includes('price')) {
-    lines.push(`Price: ${peso(product.unit_price)} per ${product.unit}`);
-    emitted.add('price');
+  const addFact = (value: string) => {
+    const sentence = firstSentence(value);
+    if (!emitted.has(sentence)) { sentences.push(productFact(name, value)); emitted.add(sentence); }
+  };
+  if (requested.has('overview')) {
+    const value = product.purpose?.trim() || product.description?.trim() || product.benefits?.trim();
+    if (value) addFact(value);
+    else sentences.push(`${name} is listed in our catalog, but its description is not on file yet.`);
   }
-
-  if (requested.includes('availability')) {
-    lines.push(`Availability: ${availabilityLine(product)}`);
-    emitted.add('availability');
+  for (const [intent, label, missingLabel] of [
+    ['purpose', 'Purpose', 'what it is used for'], ['benefits', 'Benefits', 'its benefits'],
+    ['ingredients', 'Ingredients', 'its ingredients'], ['usage', 'Usage', 'usage instructions'],
+  ] as const) {
+    if (!requested.has(intent)) continue;
+    const value = values.find((field) => field.label === label)?.value;
+    if (value) addFact(value); else missing.push(missingLabel);
   }
-
-  if (requested.includes('related_services')) {
-    lines.push(
-      product.related_services.length > 0
-        ? `Related services: ${product.related_services.slice(0, 3).join(', ')}`
-        : `Related services: ${MISSING_FIELD_NOTE}`,
-    );
-    emitted.add('related_services');
-  }
-
-  // A bare-name reply should still show price and availability when nothing more
-  // specific was asked, since those are the two facts every shopper wants.
-  if (wantsOverview && !narrowOnly) {
-    if (!emitted.has('price')) {
-      lines.push(`Price: ${peso(product.unit_price)} per ${product.unit}`);
-    }
-    if (!emitted.has('availability')) {
-      lines.push(`Availability: ${availabilityLine(product)}`);
-    }
-    if (!emitted.has('related_services') && product.related_services.length > 0) {
-      lines.push(`Related services: ${product.related_services.slice(0, 3).join(', ')}`);
-    }
-  }
-
-  lines.push(DISCLAIMER);
-  return lines.join('\n');
+  if (missing.length) sentences.push(`We don't have ${missing.join(' or ')} on file for ${name} yet. Our team can check for you.`);
+  if (requested.has('price')) sentences.push(`${sentences.length ? 'It' : name} ${product.unit_price === 0 ? 'is free' : `costs ${peso(product.unit_price)} per ${product.unit}`}.`);
+  if (requested.has('availability')) sentences.push(`${sentences.length ? 'It' : name} is ${availabilityLine(product).toLowerCase()}.`);
+  if (requested.has('related_services')) sentences.push(product.related_services.length
+    ? `${name} is listed for use with ${product.related_services.slice(0, 3).join(', ')}.`
+    : `${name}: related services are not on file yet. Our team can check for you.`);
+  return sentences.join(' ');
 }
 
 /**
@@ -630,11 +577,7 @@ export function renderAmbiguousReply(products: ProductRecord[], limit = 3): stri
 
 /** Reply when no catalog product matches. Must not describe a product we lack. */
 export function renderNoMatchReply(): string {
-  return (
-    'I could not find a product matching that in our current catalog, so I do not want to guess at its details. ' +
-    'You can browse what we carry by asking what products we have, or contact the clinic and our staff will check for you.\n\n' +
-    DISCLAIMER
-  );
+  return 'I could not find a product matching that name. Could you check the spelling or name another item?';
 }
 
 /**
@@ -692,12 +635,12 @@ export function recommendProducts(products: ProductRecord[], message: string): P
     }, 0);
     return { product, score };
   }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
-    .slice(0, 3).map((item) => item.product);
+    .slice(0, 2).map((item) => item.product);
 }
 
 export function renderProductRecommendations(products: ProductRecord[]): string {
   if (!products.length) return 'I do not have a product with a recorded purpose matching that concern. Our clinic staff can help you choose.';
-  return `Options from our product catalog:\n${products.map((p) => `- ${p.name} (${peso(p.unit_price)}): ${conciseText(p.purpose || p.benefits || p.description || '', 105)}`).join('\n')}\n\n${DISCLAIMER}`;
+  return `You could consider:\n${products.slice(0, 2).map((p) => `- ${productFact(p.name, p.purpose || p.benefits || p.description || '')}`).join('\n')}\nOur team can help you choose what suits your skin.`;
 }
 
 /**

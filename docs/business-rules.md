@@ -68,6 +68,29 @@
 
 5. **Configurable units**: Products support piece, ml, mg, unit, vial, tablet, bottle, box.
 
+6. **Manual movement wording**: The inventory form shows **Add Stock** for an
+   addition and **Deduct Stock** for a deduction. Movements history shows
+   **Added Stock** for positive manual adjustment quantities and **Deducted Stock**
+   for negative ones. Purchases remain **Purchase**. The signed adjustment ledger
+   is retained so historical changes display correctly without a data migration.
+   The `added_stock` and `deducted_stock` query filters select those respective
+   directions; the existing `adjustment` API filter still selects both.
+
+## Customer SMS Greetings
+
+Customer SMS notifications use the saved `customers.first_name`, including
+compound names: `Hi Mary Anne, this is Souvari Skin Lab.` They do not split a
+full name or include the last name. Missing names use `Hi, this is Souvari Skin
+Lab.` A name-lookup failure does not block SMS delivery. In-app message wording
+is independent of the SMS greeting.
+
+Cancellation SMS render the greeting inside their short template, rather than
+adding a second greeting. Dates are compacted (e.g. `September` → `Sep`) and
+long reasons are shortened to a 160-character target while the full reason stays
+in-app. Unusually long first names use a more compact cancellation template.
+Character length is not a guarantee of one encoded SMS segment: Unicode names
+and reasons may use a different SMS encoding.
+
 ## Service Consumption Rules
 
 1. **Configurable per service**: Each service defines which products it consumes and in what quantity.

@@ -568,7 +568,7 @@ describe('AiService policy and treatment-logistics routing', () => {
     const result = await aiService.processMessage({ message: 'how long does 10 in 1 HydraFacial take?' });
 
     expect(result.response).toContain('10 in 1 HydraFacial');
-    expect(result.response).toContain('Duration: 60 minutes');
+    expect(result.response).toContain('60 minutes');
   });
 });
 
@@ -664,7 +664,7 @@ describe('AiService alias and umbrella routing', () => {
 
     expect(result.response).not.toContain('could not find a product');
     expect(result.response).not.toContain('outside what I can help with');
-    expect(result.response).toContain('pricing for');
+    expect(result.response).toContain('price for');
   });
 
   it('routes a reservation question to the booking information', async () => {

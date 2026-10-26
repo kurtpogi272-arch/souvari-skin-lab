@@ -254,33 +254,41 @@ describe('detectIntents', () => {
 });
 
 describe('renderProductAnswer', () => {
+  it('keeps compound recorded purposes grammatical and complete without ellipsis truncation', () => {
+    const product = p('Aloe Gel', {
+      purpose: 'Used to hydrate dry skin, and to support skin comfort. Another recorded detail.',
+    });
+    const reply = renderProductAnswer(product, ['purpose']);
+    expect(reply).toBe('Aloe Gel helps hydrate dry skin, and support skin comfort.');
+    expect(reply).not.toContain('and to support');
+    expect(reply).not.toContain('...');
+  });
   it('keeps price-only answers focused rather than repeating the full product overview', () => {
     const out = renderProductAnswer(GEL, detectIntents('How much is Zephyr Breeze Gel?'));
-    expect(out).toContain('Price: ₱500');
+    expect(out).toBe('Zephyr Breeze Gel costs ₱500 per piece.');
     expect(out).not.toContain('Description:');
     expect(out).not.toContain('Related services:');
   });
   it('renders a bare-name overview with only stored facts', () => {
     const out = renderProductAnswer(GEL, ['overview']);
     expect(out).toContain('Zephyr Breeze Gel');
-    expect(out).toContain('Description: A soothing gel for cooling and hydration.');
-    expect(out).toContain('Category: Skincare Products');
-    expect(out).toContain('Price: ₱500 per piece');
-    expect(out).toContain('Availability: In stock');
-    expect(out).toContain(`Related services: ${WAX_SESSION}, ${RESET_FACIAL}`);
+    expect(out).toBe('Zephyr Breeze Gel is a soothing gel for cooling and hydration.');
+    expect(out).not.toContain('Category:');
+    expect(out).not.toContain('₱');
+    expect(out).not.toContain('stock');
   });
 
   it('never invents a field the clinic has not recorded', () => {
     const out = renderProductAnswer(GEL, ['overview']);
     // This fixture stores a description but no purpose, benefits, ingredients or usage.
-    expect(out).toMatch(/^Description:/m);
+    expect(out).toContain('soothing gel for cooling and hydration');
     expect(out).not.toMatch(/^Purpose:/m);
     expect(out).not.toMatch(/^Benefits:/m);
     expect(out).not.toMatch(/^Ingredients:/m);
     expect(out).not.toMatch(/^Usage:/m);
   });
 
-  it('renders stored purpose and benefits in an overview', () => {
+  it('uses one purpose sentence rather than dumping all fields in an overview', () => {
     const detailed = p('Aurora Repair Cream', {
       id: 11,
       description: 'A calming repair cream.',
@@ -288,9 +296,8 @@ describe('renderProductAnswer', () => {
       benefits: 'Commonly used to support the moisture barrier.',
     });
     const out = renderProductAnswer(detailed, ['overview']);
-    expect(out).toContain('Description: A calming repair cream.');
-    expect(out).toContain('Purpose: Used to soothe dry, irritated skin.');
-    expect(out).toContain('Benefits: Commonly used to support the moisture barrier.');
+    expect(out).toBe('Aurora Repair Cream helps soothe dry, irritated skin.');
+    expect(out).not.toContain('Benefits:');
   });
 
   it('answers a purpose question from stored data without a missing note', () => {
@@ -299,7 +306,7 @@ describe('renderProductAnswer', () => {
       purpose: 'Used to soothe dry, irritated skin.',
     });
     const out = renderProductAnswer(detailed, detectIntents('what is aurora repair cream used for?'));
-    expect(out).toContain('Purpose: Used to soothe dry, irritated skin.');
+    expect(out).toContain('helps soothe dry, irritated skin.');
     expect(out).not.toContain('what it is used for');
   });
 
@@ -309,7 +316,7 @@ describe('renderProductAnswer', () => {
       benefits: 'Commonly used to support the moisture barrier.',
     });
     const out = renderProductAnswer(detailed, detectIntents('what are the benefits of aurora repair cream?'));
-    expect(out).toContain('Benefits: Commonly used to support the moisture barrier.');
+    expect(out).toContain('can help support the moisture barrier.');
   });
 
   it('reports only the missing field when its counterpart is present', () => {
@@ -318,7 +325,7 @@ describe('renderProductAnswer', () => {
       purpose: 'Used to soothe dry, irritated skin.',
     });
     const out = renderProductAnswer(partial, ['overview', 'purpose', 'benefits']);
-    expect(out).toContain('Purpose: Used to soothe dry, irritated skin.');
+    expect(out).toContain('helps soothe dry, irritated skin.');
     expect(out).toContain('its benefits');
     expect(out).not.toContain('what it is used for');
   });
@@ -354,48 +361,45 @@ describe('renderProductAnswer', () => {
   it('says so explicitly when asked about missing details', () => {
     const out = renderProductAnswer(GEL, ['ingredients']);
     expect(out).toContain('its ingredients');
-    expect(out).toContain('do not have those details on file');
+    expect(out).toContain("We don't have its ingredients on file");
   });
 
   it('answers a price question with the stored price', () => {
     const out = renderProductAnswer(SERUM, detectIntents('how much is quartz radiance serum?'));
-    expect(out).toContain('Price: ₱1,600 per piece');
+    expect(out).toContain('costs ₱1,600 per piece');
   });
 
   it('reports out of stock as a state, never as a count', () => {
     const out = renderProductAnswer(OUT_OF_STOCK, ['availability']);
-    expect(out).toContain('Availability: Currently out of stock');
+    expect(out).toContain('is currently out of stock');
     expect(out).not.toMatch(/\b0 (in stock|units)\b/i);
   });
 
   it('omits related services when none are recorded', () => {
     const out = renderProductAnswer(SERUM, ['related_services']);
-    expect(out).toContain('Related services:');
-    expect(out).toContain('do not have those details on file');
+    expect(out).toContain('related services are not on file');
   });
 
   it('answers every part of a multi-intent question', () => {
     const out = renderProductAnswer(BALM, detectIntents('what is midnight balm used for and how much is it?'));
     expect(out).toContain('Onyx Midnight Balm');
-    expect(out).toContain('Price: ₱1,400 per piece');
+    expect(out).toContain('costs ₱1,400 per piece');
     expect(out).toContain('what it is used for');
   });
 
   it('does not repeat a field when overview and price are both requested', () => {
     const out = renderProductAnswer(GEL, ['overview', 'price', 'availability']);
-    const priceLines = out.split('\n').filter((l) => l.startsWith('Price:'));
-    const availLines = out.split('\n').filter((l) => l.startsWith('Availability:'));
-    expect(priceLines).toHaveLength(1);
-    expect(availLines).toHaveLength(1);
+    expect(out.match(/₱500/g)).toHaveLength(1);
+    expect(out.match(/in stock/g)).toHaveLength(1);
   });
 
-  it('always ends with the consult-a-professional note', () => {
-    expect(renderProductAnswer(CATALOG[0], ['overview'])).toMatch(/clinic professionals/);
+  it('does not append an unrelated medical disclaimer to a factual price answer', () => {
+    expect(renderProductAnswer(CATALOG[0], ['price'])).not.toMatch(/clinic professionals/);
   });
 
   it('formats a zero price as free rather than ₱0', () => {
     const free = p('Vellum Complimentary Sample', { id: 10, unit_price: 0 });
-    expect(renderProductAnswer(free, ['price'])).toContain('Price: Free');
+    expect(renderProductAnswer(free, ['price'])).toContain('is free.');
   });
 });
 
@@ -414,9 +418,9 @@ describe('product recommendations from recorded purposes', () => {
     expect(recommendProducts([excluded], 'Products for acne')).toEqual([]);
   });
 
-  it('caps recommendations at three matching products', () => {
+  it('keeps the recommendation list to two matching products', () => {
     const products = Array.from({ length: 8 }, (_, i) => p(`Moisture ${i}`, { id: i, purpose: 'Helps with dry skin hydration.' }));
-    expect(recommendProducts(products, 'Products for dry skin')).toHaveLength(3);
+    expect(recommendProducts(products, 'Products for dry skin')).toHaveLength(2);
   });
 });
 
@@ -640,7 +644,7 @@ describe('ambiguous and no-match replies', () => {
   it('does not describe a product it does not have', () => {
     const out = renderNoMatchReply();
     expect(out).toContain('could not find a product');
-    expect(out).toContain('do not want to guess');
+    expect(out).toContain('check the spelling');
     expect(out).not.toContain('₱');
   });
 });
